@@ -1,0 +1,36 @@
+# Środowiska wirtualne Python
+venv/
+env/
+.venv/
+.env/
+
+# Cache i skompilowane pliki Pythona
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Pliki systemowe OS
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Logi wyeksportowane z konsoli aplikacji
+*.html
+*.log
+*.txt
+*.md
+!README.md
+!GEMINI.md
+!todo_tasks.md
+
+# Konfiguracje edytorów kodu / IDE
+.vscode/
+.idea/
+.vs/
+
+# Zapisy konfiguracji specyficzne dla użytkownika aplikacji
+# Pozwala to zachować w repozytorium plik 'default.json', 
+# ale ignoruje pamięć stanów okien i lokalne ustawienia profili portów.
+cfg/app_settings.json
+cfg/COM*.json
+cfg/nowa_karta.json

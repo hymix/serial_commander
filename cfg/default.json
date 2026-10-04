@@ -1,0 +1,118 @@
+{
+    "port": "COM3",
+    "baudrate": 115200,
+    "mode": "ASCII",
+    "filters": [],
+    "buttons": [
+        {
+            "id": 1,
+            "is_used": false,
+            "type": "toggle",
+            "name": "Przycisk 1",
+            "tx": "FF FF",
+            "tx_on": "AA 01 00 55",
+            "tx_off": "AA 00 00 55",
+            "ack_on": "AA 01 00 55",
+            "ack_off": "AA 00 00 55"
+        },
+        {
+            "id": 2,
+            "is_used": false,
+            "type": "toggle",
+            "name": "Przycisk 2",
+            "tx": "FF FF",
+            "tx_on": "AA 01 00 55",
+            "tx_off": "AA 00 00 55",
+            "ack_on": "AA 01 00 55",
+            "ack_off": "AA 00 00 55"
+        },
+        {
+            "id": 3,
+            "is_used": false,
+            "type": "toggle",
+            "name": "Przycisk 3",
+            "tx": "FF FF",
+            "tx_on": "AA 01 00 55",
+            "tx_off": "AA 00 00 55",
+            "ack_on": "AA 01 00 55",
+            "ack_off": "AA 00 00 55"
+        },
+        {
+            "id": 4,
+            "is_used": false,
+            "type": "toggle",
+            "name": "Przycisk 4",
+            "tx": "FF FF",
+            "tx_on": "AA 01 00 55",
+            "tx_off": "AA 00 00 55",
+            "ack_on": "AA 01 00 55",
+            "ack_off": "AA 00 00 55"
+        },
+        {
+            "id": 5,
+            "is_used": false,
+            "type": "toggle",
+            "name": "Przycisk 5",
+            "tx": "FF FF",
+            "tx_on": "AA 01 00 55",
+            "tx_off": "AA 00 00 55",
+            "ack_on": "AA 01 00 55",
+            "ack_off": "AA 00 00 55"
+        },
+        {
+            "id": 6,
+            "is_used": false,
+            "type": "toggle",
+            "name": "Przycisk 6",
+            "tx": "FF FF",
+            "tx_on": "AA 01 00 55",
+            "tx_off": "AA 00 00 55",
+            "ack_on": "AA 01 00 55",
+            "ack_off": "AA 00 00 55"
+        },
+        {
+            "id": 7,
+            "is_used": false,
+            "type": "toggle",
+            "name": "Przycisk 7",
+            "tx": "FF FF",
+            "tx_on": "AA 01 00 55",
+            "tx_off": "AA 00 00 55",
+            "ack_on": "AA 01 00 55",
+            "ack_off": "AA 00 00 55"
+        },
+        {
+            "id": 8,
+            "is_used": false,
+            "type": "toggle",
+            "name": "Przycisk 8",
+            "tx": "FF FF",
+            "tx_on": "AA 01 00 55",
+            "tx_off": "AA 00 00 55",
+            "ack_on": "AA 01 00 55",
+            "ack_off": "AA 00 00 55"
+        },
+        {
+            "id": 9,
+            "is_used": false,
+            "type": "toggle",
+            "name": "Przycisk 9",
+            "tx": "FF FF",
+            "tx_on": "AA 01 00 55",
+            "tx_off": "AA 00 00 55",
+            "ack_on": "AA 01 00 55",
+            "ack_off": "AA 00 00 55"
+        },
+        {
+            "id": 10,
+            "is_used": false,
+            "type": "toggle",
+            "name": "Przycisk 10",
+            "tx": "FF FF",
+            "tx_on": "AA 01 00 55",
+            "tx_off": "AA 00 00 55",
+            "ack_on": "AA 01 00 55",
+            "ack_off": "AA 00 00 55"
+        }
+    ]
+}
