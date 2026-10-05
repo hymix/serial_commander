@@ -10,9 +10,9 @@ from PyQt6.QtWidgets import (QTableWidget, QTableWidgetItem, QAbstractItemView, 
                              QVBoxLayout, QHBoxLayout, QWidget, QTextEdit, 
                              QComboBox, QLabel, QMessageBox, QLineEdit, 
                              QRadioButton, QScrollArea, QDialog, QFormLayout, 
-                             QDialogButtonBox, QCheckBox, QInputDialog, QSpinBox, QTabWidget, QTabBar, QFileDialog)
+                             QDialogButtonBox, QCheckBox, QInputDialog, QSpinBox, QTabWidget, QTabBar, QFileDialog, QMenu)
 from PyQt6.QtCore import QThread, pyqtSignal, Qt, QSize, QTimer
-from PyQt6.QtGui import QIcon, QPixmap, QColor
+from PyQt6.QtGui import QIcon, QPixmap, QColor, QTextDocument, QTextCursor, QShortcut, QKeySequence, QAction
 
 CFG_DIR = "cfg"
 APP_SETTINGS_FILE = os.path.join(CFG_DIR, "app_settings.json")
@@ -357,6 +357,93 @@ class FilterEditDialog(QDialog):
             "color": color
         }
 
+class SearchDialog(QDialog):
+    def __init__(self, text_edit, parent=None):
+        super().__init__(parent)
+        self.text_edit = text_edit
+        self.setWindowTitle("Szukaj w logach")
+        self.setWindowFlags(Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint)
+        self.setModal(False)
+        self.resize(300, 40)
+        
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(5, 5, 5, 5)
+        
+        self.le_search = QLineEdit()
+        self.le_search.setPlaceholderText("Szukaj...")
+        self.le_search.textChanged.connect(self.update_count)
+        self.le_search.returnPressed.connect(self.search_forward)
+        
+        self.lbl_count = QLabel("0 wyników")
+        
+        self.btn_prev = QPushButton("▲")
+        self.btn_prev.setFixedSize(24, 24)
+        self.btn_prev.clicked.connect(self.search_backward)
+        
+        self.btn_next = QPushButton("▼")
+        self.btn_next.setFixedSize(24, 24)
+        self.btn_next.clicked.connect(self.search_forward)
+        
+        layout.addWidget(self.le_search)
+        layout.addWidget(self.lbl_count)
+        layout.addWidget(self.btn_prev)
+        layout.addWidget(self.btn_next)
+
+    def update_count(self):
+        text = self.le_search.text()
+        if not text:
+            self.lbl_count.setText("0 wyników")
+            # Reset cursor selection
+            cursor = self.text_edit.textCursor()
+            cursor.clearSelection()
+            self.text_edit.setTextCursor(cursor)
+            return
+            
+        doc = self.text_edit.document()
+        cursor = QTextCursor(doc)
+        
+        count = 0
+        while True:
+            cursor = doc.find(text, cursor)
+            if cursor.isNull():
+                break
+            count += 1
+            
+        self.lbl_count.setText(f"{count} wyników")
+        self.search_forward(first_time=True)
+        
+    def search_forward(self, first_time=False):
+        text = self.le_search.text()
+        if not text:
+            return
+            
+        # Start search from current cursor
+        cursor = self.text_edit.textCursor()
+        if first_time:
+            cursor.movePosition(QTextCursor.MoveOperation.Start)
+            
+        found = self.text_edit.find(text)
+        if not found and not first_time:
+            # Wrap around to start
+            cursor = self.text_edit.textCursor()
+            cursor.movePosition(QTextCursor.MoveOperation.Start)
+            self.text_edit.setTextCursor(cursor)
+            self.text_edit.find(text)
+
+    def search_backward(self):
+        text = self.le_search.text()
+        if not text:
+            return
+            
+        options = QTextDocument.FindFlag.FindBackward
+        found = self.text_edit.find(text, options)
+        if not found:
+            # Wrap around to end
+            cursor = self.text_edit.textCursor()
+            cursor.movePosition(QTextCursor.MoveOperation.End)
+            self.text_edit.setTextCursor(cursor)
+            self.text_edit.find(text, options)
+
 # ==========================================
 # 3. WĄTEK POBOCZNY (WORKER)
 # ==========================================
@@ -589,10 +676,11 @@ class FilterManagerDialog(QDialog):
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.table.setColumnCount(3)
-        self.table.setHorizontalHeaderLabels(["Wzór", "Akcja", "Zarządzanie"])
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.setColumnCount(4)
+        self.table.setHorizontalHeaderLabels(["Aktywny", "Wzór", "Akcja", "Zarządzanie"])
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         self.layout_table.addWidget(self.table)
         self.stack.addWidget(self.page_table)
         self.table.horizontalHeader().sectionClicked.connect(self.on_header_clicked)
@@ -653,16 +741,28 @@ class FilterManagerDialog(QDialog):
         for row, i in enumerate(self.shown_indices):
             f = filters[i]
             
-            item0 = QTableWidgetItem(f.get("pattern", ""))
-            item0.setFlags(item0.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            self.table.setItem(row, 0, item0)
+            # Aktywny checkbox
+            is_active = f.get("is_active", True)
+            chk_widget = QWidget()
+            chk_layout = QHBoxLayout(chk_widget)
+            chk_layout.setContentsMargins(0, 0, 0, 0)
+            chk_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            chk = QCheckBox()
+            chk.setChecked(is_active)
+            chk.stateChanged.connect(lambda state, idx=i: self.toggle_active(idx, state))
+            chk_layout.addWidget(chk)
+            self.table.setCellWidget(row, 0, chk_widget)
+            
+            item1 = QTableWidgetItem(f.get("pattern", ""))
+            item1.setFlags(item1.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.table.setItem(row, 1, item1)
             
             action = f.get("action", "hide")
             a_text = "Ukryj" if action == "hide" else "Koloruj" if action == "color" else "Dozwolony"
             
-            item1 = QTableWidgetItem(a_text)
-            item1.setFlags(item1.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            self.table.setItem(row, 1, item1)
+            item2 = QTableWidgetItem(a_text)
+            item2.setFlags(item2.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.table.setItem(row, 2, item2)
             
             widget = QWidget()
             h_layout = QHBoxLayout(widget)
@@ -675,7 +775,10 @@ class FilterManagerDialog(QDialog):
             btn_d.clicked.connect(lambda checked, idx=i: self.delete_by_idx(idx))
             h_layout.addWidget(btn_e)
             h_layout.addWidget(btn_d)
-            self.table.setCellWidget(row, 2, widget)
+            self.table.setCellWidget(row, 3, widget)
+            
+    def toggle_active(self, idx, state):
+        self.app_config["filters"][idx]["is_active"] = (state == 2) # Qt.CheckState.Checked.value is 2
             
     def open_edit(self, idx):
         self.edit_idx = idx
@@ -719,7 +822,7 @@ class FilterManagerDialog(QDialog):
             self.refresh_table()
 
     def on_header_clicked(self, logical_index):
-        if logical_index == 2:
+        if logical_index == 3 or logical_index == 0:
             return
             
         if self.sort_col == logical_index:
@@ -728,9 +831,9 @@ class FilterManagerDialog(QDialog):
             self.sort_col = logical_index
             self.sort_asc = True
             
-        if logical_index == 0:
+        if logical_index == 1:
             self.app_config["filters"].sort(key=lambda f: f.get("pattern", "").lower(), reverse=not self.sort_asc)
-        elif logical_index == 1:
+        elif logical_index == 2:
             self.app_config["filters"].sort(key=lambda f: f.get("action", "hide").lower(), reverse=not self.sort_asc)
             
         self.refresh_table()
@@ -754,10 +857,11 @@ class ParserManagerDialog(QDialog):
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.table.setColumnCount(3)
-        self.table.setHorizontalHeaderLabels(["Wzór (HEX)", "Zastąp tekstem", "Zarządzanie"])
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.setColumnCount(4)
+        self.table.setHorizontalHeaderLabels(["Aktywny", "Wzór (HEX)", "Zastąp tekstem", "Zarządzanie"])
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         self.layout_table.addWidget(self.table)
         self.stack.addWidget(self.page_table)
         self.table.horizontalHeader().sectionClicked.connect(self.on_header_clicked)
@@ -801,8 +905,20 @@ class ParserManagerDialog(QDialog):
         parsers = self.app_config.get("parsers", [])
         self.table.setRowCount(len(parsers))
         for i, p in enumerate(parsers):
-            self.table.setItem(i, 0, QTableWidgetItem(p.get("pattern", "")))
-            self.table.setItem(i, 1, QTableWidgetItem(p.get("text", "")))
+            # Aktywny checkbox
+            is_active = p.get("is_active", True)
+            chk_widget = QWidget()
+            chk_layout = QHBoxLayout(chk_widget)
+            chk_layout.setContentsMargins(0, 0, 0, 0)
+            chk_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            chk = QCheckBox()
+            chk.setChecked(is_active)
+            chk.stateChanged.connect(lambda state, idx=i: self.toggle_active(idx, state))
+            chk_layout.addWidget(chk)
+            self.table.setCellWidget(i, 0, chk_widget)
+            
+            self.table.setItem(i, 1, QTableWidgetItem(p.get("pattern", "")))
+            self.table.setItem(i, 2, QTableWidgetItem(p.get("text", "")))
             
             widget = QWidget()
             h_layout = QHBoxLayout(widget)
@@ -815,7 +931,10 @@ class ParserManagerDialog(QDialog):
             btn_d.clicked.connect(lambda checked, idx=i: self.delete_by_idx(idx))
             h_layout.addWidget(btn_e)
             h_layout.addWidget(btn_d)
-            self.table.setCellWidget(i, 2, widget)
+            self.table.setCellWidget(i, 3, widget)
+            
+    def toggle_active(self, idx, state):
+        self.app_config["parsers"][idx]["is_active"] = (state == 2) # Qt.CheckState.Checked.value is 2
             
     def open_edit(self, idx):
         self.edit_idx = idx
@@ -842,7 +961,7 @@ class ParserManagerDialog(QDialog):
             self.refresh_table()
 
     def on_header_clicked(self, logical_index):
-        if logical_index == 2:
+        if logical_index == 3 or logical_index == 0:
             return
             
         if self.sort_col == logical_index:
@@ -851,9 +970,9 @@ class ParserManagerDialog(QDialog):
             self.sort_col = logical_index
             self.sort_asc = True
             
-        if logical_index == 0:
+        if logical_index == 1:
             self.app_config["parsers"].sort(key=lambda p: p.get("pattern", "").lower(), reverse=not self.sort_asc)
-        elif logical_index == 1:
+        elif logical_index == 2:
             self.app_config["parsers"].sort(key=lambda p: p.get("text", "").lower(), reverse=not self.sort_asc)
             
         self.refresh_table()
@@ -1015,7 +1134,28 @@ class SerialTab(QWidget):
         self.console = QTextEdit()
         self.console.setReadOnly(True)
         self.console.setStyleSheet("background-color: #1e1e1e; font-family: Consolas, monospace; font-size: 13px;")
+        
+        self.search_dialog = None
+        self.shortcut_search = QShortcut(QKeySequence("Ctrl+F"), self.console)
+        self.shortcut_search.activated.connect(self.show_search_dialog)
+        
+        self.console.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.console.customContextMenuRequested.connect(self.show_console_context_menu)
+        
         right_layout.addWidget(self.console)
+
+        self.scroll_btn_layout = QHBoxLayout()
+        self.scroll_btn_layout.addStretch()
+        self.btn_scroll_down = QPushButton("▼ Wróć do najnowszych (w dół)")
+        self.btn_scroll_down.setStyleSheet("background-color: #444444; color: white; border: 1px solid #555; border-radius: 4px; padding: 2px 10px; font-weight: bold;")
+        self.btn_scroll_down.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_scroll_down.clicked.connect(self.force_scroll_to_bottom)
+        self.btn_scroll_down.hide()
+        self.scroll_btn_layout.addWidget(self.btn_scroll_down)
+        right_layout.addLayout(self.scroll_btn_layout)
+        
+        self.console.verticalScrollBar().valueChanged.connect(self.on_scroll_changed)
+        self.console.verticalScrollBar().rangeChanged.connect(self.on_scroll_changed)
 
         # Pasek 4: Tryby i zasilanie
         mode_layout = QHBoxLayout()
@@ -1314,8 +1454,8 @@ class SerialTab(QWidget):
         
         filters = self.app_config.get("filters", [])
         
-        # 1. Whitelist (jeśli istnieje jakikolwiek filtr 'allow', wiadomość musi pasować do jednego z nich)
-        allow_filters = [f for f in filters if f["action"] == "allow"]
+        # 1. Whitelist (jeśli istnieje jakikolwiek aktywny filtr 'allow', wiadomość musi pasować do jednego z nich)
+        allow_filters = [f for f in filters if f["action"] == "allow" and f.get("is_active", True)]
         if allow_filters:
             is_allowed = False
             for f in allow_filters:
@@ -1327,6 +1467,8 @@ class SerialTab(QWidget):
         
         # 2. Standardowe filtry (Ukryj / Koloruj)
         for f in filters:
+            if not f.get("is_active", True):
+                continue
             if fnmatch.fnmatch(msg, f["pattern"]):
                 if f["action"] == "hide":
                     return True, msg, ""
@@ -1336,6 +1478,8 @@ class SerialTab(QWidget):
         # Apply Parsers
         parsed_msg = msg
         for p in self.app_config.get("parsers", []):
+            if not p.get("is_active", True):
+                continue
             if fnmatch.fnmatch(msg, p["pattern"]):
                 parsed_msg = p["text"]
                 color = "#ffd700" # Złoty kolor dla sparsowanych ramek
@@ -1418,8 +1562,7 @@ class SerialTab(QWidget):
     def log_tx(self, msg, marker=""):
         self.has_real_logs = True
         marker_html = f'<span style="color: #ffaa00; font-weight: bold;">[{marker}] </span>' if marker else ""
-        self.console.append(f'<span style="color: #4da6ff;">TX {self.get_timestamp()}: </span>{marker_html}<span style="color: #4da6ff;">{msg}</span>')
-        self.scroll_to_bottom()
+        self.append_html_no_autoscroll(f'<span style="color: #4da6ff;">TX {self.get_timestamp()}: </span>{marker_html}<span style="color: #4da6ff;">{msg}</span>')
 
     def log_rx(self, msg):
         should_hide, parsed_msg, text_color = self.process_message_filters(msg)
@@ -1428,16 +1571,61 @@ class SerialTab(QWidget):
             
         self.has_real_logs = True
         ts = self.get_timestamp()
-        self.console.append(f'<span style="color: #66cc66;">RX {ts}: </span><span style="color: {text_color};">{parsed_msg}</span>')
-        self.scroll_to_bottom()
+        self.append_html_no_autoscroll(f'<span style="color: #66cc66;">RX {ts}: </span><span style="color: {text_color};">{parsed_msg}</span>')
 
     def log_info(self, msg):
-        self.console.append(f'<span style="color: #cccccc;">{msg}</span>')
-        self.scroll_to_bottom()
+        self.append_html_no_autoscroll(f'<span style="color: #cccccc;">{msg}</span>')
 
-    def scroll_to_bottom(self):
+    def append_html_no_autoscroll(self, html):
+        scrollbar = self.console.verticalScrollBar()
+        was_at_bottom = scrollbar.value() >= scrollbar.maximum() - 5
+        old_val = scrollbar.value()
+        
+        self.console.append(html)
+        
+        if was_at_bottom:
+            scrollbar.setValue(scrollbar.maximum())
+        else:
+            scrollbar.setValue(old_val)
+
+    def on_scroll_changed(self):
+        scrollbar = self.console.verticalScrollBar()
+        if scrollbar.value() < scrollbar.maximum() - 5:
+            self.btn_scroll_down.show()
+        else:
+            self.btn_scroll_down.hide()
+
+    def force_scroll_to_bottom(self):
         scrollbar = self.console.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
+
+    def show_search_dialog(self):
+        if not self.search_dialog:
+            self.search_dialog = SearchDialog(self.console, self)
+        
+        # Position popup near top-right of console
+        console_rect = self.console.geometry()
+        global_pos = self.console.mapToGlobal(console_rect.topRight())
+        self.search_dialog.move(global_pos.x() - self.search_dialog.width() - 20, global_pos.y() + 20)
+        
+        self.search_dialog.show()
+        self.search_dialog.raise_()
+        self.search_dialog.activateWindow()
+        self.search_dialog.le_search.setFocus()
+        # If there's selected text, put it in search
+        selected = self.console.textCursor().selectedText()
+        if selected:
+            self.search_dialog.le_search.setText(selected)
+
+    def show_console_context_menu(self, pos):
+        menu = self.console.createStandardContextMenu()
+        
+        menu.addSeparator()
+        action_search = QAction("Szukaj (Ctrl+F)", self)
+        action_search.triggered.connect(self.show_search_dialog)
+        menu.addAction(action_search)
+        
+        menu.exec(self.console.mapToGlobal(pos))
 
     def refresh_ports(self):
         self.port_combo.clear()
@@ -1460,7 +1648,7 @@ class SerialTab(QWidget):
         
         if filename:
             try:
-                date_info = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                date_info = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 port_info = f"{self.port_combo.currentText()} ({self.baud_combo.currentText()} bps)"
                 cfg_info = self.combo_cfg.currentText()
                 
@@ -1503,8 +1691,7 @@ class SerialTab(QWidget):
     def insert_marker(self):
         text, ok = QInputDialog.getText(self, "Marker", "Wpisz tekst markera:")
         if ok and text:
-            self.console.append(f'<br><span style="color: #ff9800; font-weight: bold; font-size: 14px;">--- MARKER: {text} ---</span><br>')
-            self.scroll_to_bottom()
+            self.append_html_no_autoscroll(f'<br><span style="color: #ff9800; font-weight: bold; font-size: 14px;">--- MARKER: {text} ---</span><br>')
 
     def toggle_connection(self):
         if self.worker and self.worker.is_running:

@@ -34,10 +34,12 @@ Oparte na systemie Qt Style Sheets (QSS) dynamicznie generowanym w `get_btn_styl
 ### B. Konsola Logów, Komunikacja i Eksport
 *   **Dwa tryby:** ASCII oraz BINARY (HEX).
 *   **Eksport Logów:** Możliwość zapisu wygenerowanej sesji do HTML (z zachowaniem kolorowania ułamków sekund), TXT oraz Markdown z wstrzykniętymi meta-danymi.
+*   **Smart Autoscroll:** Konsola inteligentnie zatrzymuje autoscroll, gdy użytkownik przewija w górę, aby przeczytać historię. Posiada dedykowany przycisk powrotu do najnowszych wiadomości.
+*   **Wyszukiwarka Logów:** Nienakładający się panel (popup pod `Ctrl+F` lub z menu PPM) umożliwiający obustronne przeszukiwanie konsoli ze wsparciem wyrażeń wieloznacznych (wildcards np. `*test*`).
 *   Zoptymalizowane globalne zamykanie aplikacji - przy zamykaniu głównego okna system pyta o zapis logów tylko raz zbiorczo, pomijając karty zawierające tylko systemowe komunikaty o połączeniu.
 
 ### C. Zaawansowane Filtrowanie RX i Zapora
-*   Działa w oparciu o bibliotekę `fnmatch`. Posiada tryby "Ukryj" i "Koloruj".
+*   Działa w oparciu o bibliotekę `fnmatch`. Posiada tryby "Ukryj" i "Koloruj". Z panelu menedżera można je dowolnie aktywować i dezaktywować za pomocą checkboxów ("Aktywny").
 *   **Tryb Zapory (Whitelist):** Trzecia akcja to "Dozwolony". Jeśli na aktywnej karcie istnieje chociaż jedna taka reguła, terminal całkowicie blokuje inne odbierane dane. Wyświetlany jest wtedy agresywny, czerwony przycisk "⚠ ZAPORA", który otwiera wyselekcjonowanego Menadżera Filtrów pokazującego tylko dozwolone reguły.
 
 
@@ -52,6 +54,7 @@ Oparte na systemie Qt Style Sheets (QSS) dynamicznie generowanym w `get_btn_styl
 3.  **Parsowanie RX dla przycisków:** Bufor binarnego odczytu potwierdzeń (`self.rx_buffer`) musi być niezależny od bufora tekstowego (`self.text_buffer`). Gdy przycisk (toggle) odnajdzie swoje ACK w `self.rx_buffer`, musi precyzyjnie wyciąć tylko ten zidentyfikowany ciąg bajtów (`replace(ack, b'')`), aby nie zniszczyć reszty danych. Dodatkowo bufor ma zabezpieczenie przed przepełnieniem (czyszczenie powyżej 1024 bajtów).
 4.  **Autozapis:** Unikaj ciągłego, bezwarunkowego zapisu na dysk w głównej pętli. Zapisuj wywołując `self.save_current_settings_to_config(force=True)` tylko w momencie zmiany logiki konfiguracji przez usera (np. edycja przycisku, dodanie/edycja filtra).
 5.  **Edycja i Kodowanie Plików:** Ze względu na polskie znaki w kodzie (np. "Połącz", "Rozłącz") i specyfikę systemu Windows, bezwzględnie unikaj używania komend terminalowych PowerShell (takich jak `Get-Content` i `Set-Content`) do modyfikacji plików tekstowych. PowerShell domyślnie niszczy kodowanie UTF-8 bez BOM powodując tzw. mojibake. Używaj wyłącznie natywnego narzędzia `replace_file_content` lub w razie konieczności krótkich skryptów Python z `encoding="utf-8"`.
+6.  **Changelog:** Zawsze, gdy wprowadzane są jakiekolwiek zmiany w kodzie lub projekcie, bezwzględnie dodaj nowy wpis do pliku `changelog.md`. Wpis musi zawierać datę (w formacie YYYY-MM-DD) oraz zwięzły opis wprowadzonych nowości, modyfikacji lub poprawek.
 ## 5. Do poprawy i wdrożenia na przyszłe sesje
 *   **Refaktoryzacja gui.py:** Plik staje się bardzo duży (tzw. monolith). Należy rozważyć podzielenie go na struktury MVC lub przynajmniej wyniesienie klas zdefiniowanych jako QDialog oraz komponentów pracujących w wątkach (np. MacroRunner, SerialWorker) do osobnych plików modułów (np. w folderze components/).
 *   **Dodatkowa walidacja HEX:** Makra i przyciski wysyłają obecnie kod przy cichej akceptacji ewentualnych błędów. Przydałby się szerszy system raportowania użytkownikowi błędów parsowania komend (aby nie ignorować błędów wprowadzania za pomocą gołego bloku except Exception as e: pass).

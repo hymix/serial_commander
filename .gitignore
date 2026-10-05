@@ -34,3 +34,4 @@ desktop.ini
 cfg/app_settings.json
 cfg/COM*.json
 cfg/nowa_karta.json
+!changelog.md
