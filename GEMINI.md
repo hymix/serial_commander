@@ -6,56 +6,112 @@ Ten dokument opisuje architekturę, zrealizowane funkcjonalności oraz zasady, k
 *   **Język:** Python 3
 *   **GUI:** `PyQt6` (bezwzględny wymóg, nie używać PyQt5, PySide ani Tkinter).
 *   **Port Szeregowy:** `pyserial`.
-*   **Wątki:** Interfejs użytkownika i obsługa portu COM są ściśle odseparowane. Komunikacja sprzętowa musi odbywać się w wątku pobocznym (`QThread`) z użyciem mechanizmu sygnałów i slotów (`pyqtSignal`), aby zapobiec blokowaniu GUI (zamrażaniu okna).
-*   **Zarządzanie stanem okna:** Operacje wizualne (np. zmiana koloru, dopisywanie do konsoli) mogą być wykonywane **tylko** z poziomu głównego wątku (Main Thread).
+*   **Architektura Wielowątkowości (Thread Safety):**
+    *   Komunikacja sprzętowa z portem szeregowym (`pyserial`) odbywa się wyłącznie w dedykowanym wątku `SerialWorker(QThread)` z wykorzystaniem bezpiecznej kolejki FIFO `queue.Queue()` dla danych wychodzących (`tx_queue`).
+    *   Wątki poboczne (`SerialWorker`, `MacroRunner`) nigdy nie modyfikują bezpośrednio obiektów GUI – komunikacja z głównym wątkiem odbywa się wyłącznie przez mechanizm sygnałów i slotów (`pyqtSignal`), aby zapobiec blokowaniu GUI (zamrażaniu okna).
+    *   Operacje wizualne (np. zmiana koloru, dopisywanie do konsoli) mogą być wykonywane **tylko** z poziomu głównego wątku (Main Thread).
 *   **Zwięzłość:** Generuj tylko modyfikowane fragmenty kodu, chyba że użytkownik wyraźnie poprosi o "wygenerowanie kodu w całości".
+*   **Edycja i Kodowanie Plików:** Ze względu na polskie znaki w kodzie (np. "Połącz", "Rozłącz") i specyfikę systemu Windows, bezwzględnie unikaj używania komend terminalowych PowerShell (takich jak `Get-Content` i `Set-Content`) do modyfikacji plików tekstowych. PowerShell domyślnie niszczy kodowanie UTF-8 bez BOM powodując tzw. mojibake. Używaj wyłącznie natywnego narzędzia `replace_file_content` lub w razie konieczności krótkich skryptów Python z `encoding="utf-8"`.
+*   **Changelog:** Zawsze, gdy wprowadzane są jakiekolwiek zmiany w kodzie lub projekcie, bezwzględnie dodaj nowy wpis do pliku `changelog.md`. Wpis musi zawierać numer wersji/datę (w formacie YYYY-MM-DD) oraz zwięzły opis wprowadzonych nowości, modyfikacji lub poprawek w podziale na sekcje (*Added*, *Changed*, *Fixed*).
 
-## 2. Obecna Architektura Aplikacji
+## 2. Architektura Aplikacji (Wersja 1.5.0)
 
 Aplikacja składa się z następujących głównych komponentów:
-1.  **`MainWindow` i `SerialTab`:** Interfejs oparty o karty (`QTabWidget`). Każda karta to instancja `SerialTab` działająca w pełni niezależnie (własny COM, własna konfiguracja, własny worker).
-2.  **`SerialWorker` (Dziedziczy z QThread):** Nieskończona pętla odczytująca asynchronicznie dane z bufora sprzętowego (metoda `run` oparta na `in_waiting`). Emisja sygnałów `data_received`, `connection_status`, `error_occurred`. Metoda `send_data` (thread-safe z `pyserial`).
-3.  **`MacroRunner` (Dziedziczy z QThread):** Wątek asynchroniczny do wykonywania skryptów (komendy TX oddzielone `;` oraz pauzy `sleep(ms)`). Komunikuje się z panelem GUI używając sygnałów `tx_signal`, aby aktualizować logi.
-4.  **System Konfiguracji (JSON) i Smart COM Allocation:** 
+
+1.  **`MainWindow` i Symetryczny Split View (50% / 50%):**
+    *   **Zarządzanie kartami:** Zrezygnowano z trzymania kart wyłącznie w `QTabWidget` na rzecz centralnej listy `self.tab_list` oraz `QStackedWidget` (`self.view_stack`), który płynnie przełącza pomiędzy widokiem pojedynczych zakładek (Page 0: `QTabWidget`) a symetrycznym widokiem podzielonym Lewo/Prawo (Page 1: `self.split_container`).
+    *   **Idealna symetria 50/50:** W widoku Split View zastosowano `QHBoxLayout` z równymi wagami (`stretch=1` dla lewej i prawej karty) oraz wymuszono `QSizePolicy.Policy.Ignored` w poziomie na `SerialTab` i `right_panel_widget`. Zapobiega to przesuwaniu osi podziału ekranu, gdy na jednej z kart pojawi się dodatkowy element (np. `⚠ ZAPORA`).
+    *   **Dynamiczne skalowanie okna (`adjust_window_size_for_mode`):** Okno główne automatycznie rozszerza się do `SPLIT_WIDTH = 1440` po wejściu w widok dwóch kart i zmniejsza z powrotem do kompaktowego rozmiaru pojedynczej karty (`SINGLE_WIDTH = 940`) po powrocie do widoku zakładek (zdejmując ewentualną maksymalizację przez `showNormal()`).
+    *   **Przełączanie kart w nagłówku (`SplitCardHeader`):** Każda z dwóch widocznych kart posiada nagłówek z oznaczeniem strony (`[LEWA]` / `[PRAWA]`), wskaźnikiem stanu połączenia oraz przyciskiem menu (`self.btn_card_selector`). Kliknięcie rozwija dynamiczne menu (`populate_card_switch_menu`), które wyświetla pozostałe karty w tle, **pomijając kartę aktualnie wybraną w tym oknie**. Wybór karty z drugiego okna wykonuje zamianę miejscami (`Swap ⇄`).
+    *   **Menu kontekstowe na pasku zakładek (`QTabBar`):** Kliknięcie PPM na zakładkę pozwala szybko przypisać ją jako lewą lub prawą kartę w widoku podzielonym.
+
+2.  **`SerialTab` (Wnętrze karty i ergonomia):**
+    *   Każda karta to w pełni niezależna instancja z własnym portem COM, konfiguracją i workerem.
+    *   **Odwrócony układ góra–dół:** Pasek połączenia (`Port`, `Baud`, `Połącz`, menu sprzętowe `⚙️`, `RX: ASCII/HEX`, `⚠ ZAPORA`, `🌪️ Filtry (N)`) oraz pasek narzędzi konsoli (`Wyczyść`, `Zapisz Logi`, `Marker`, `Szukaj`, `Limit`) znajdują się na samej górze. Pole wprowadzania komend (`cmd_input`) znajduje się na samym dole, bezpośrednio pod konsolą logów.
+    *   **Skrajne rozmieszczenie paneli bocznych (`set_panel_side`):** 
+        *   Karta po lewej stronie ma panel szybkich akcji po swojej lewej (zewnętrznej) krawędzi (`▶ Akcje` / `◀ Ukryj`).
+        *   Karta po prawej stronie dynamicznie przebudowuje swój layout i umieszcza panel szybkich akcji po swojej prawej (zewnętrznej) krawędzi (`Akcje ◀` / `Ukryj ▶`).
+        *   W widoku Split View panele boczne domyślnie się zwijają, aby obie konsole logów sąsiadowały ze sobą bezpośrednio w centrum okna.
+    *   **Zwijany panel Filtrów i Parserów (`tools_frame`):** Chowany kontener sterowany przyciskiem `🌪️ Filtry (N)` na górnym pasku (`N` to suma aktywnych filtrów i parserów).
+    *   **Zwijany panel Szybkich Akcji:** Możliwość całkowitego ukrycia panelu 10 przycisków makr przyciskiem `◀ Ukryj` / `▶ Akcje`, aby oddać 100% szerokości karty dla konsoli logów.
+
+3.  **`SerialWorker` (Dziedziczy z QThread):**
+    *   Nieskończona pętla odczytująca asynchronicznie dane z bufora sprzętowego (metoda `run` oparta na `in_waiting`).
+    *   Bezpieczna kolejka FIFO `queue.Queue()` dla danych wychodzących (`tx_queue`).
+    *   Obsługa linii sprzętowych: `set_dtr(state: bool)` oraz `set_rts(state: bool)`.
+    *   Emisja sygnałów `data_received`, `connection_status`, `error_occurred`.
+
+4.  **`MacroRunner` (Dziedziczy z QThread):**
+    *   Wątek asynchroniczny do wykonywania skryptów (komendy TX oddzielone `;` oraz pauzy `sleep(ms)`). Komunikuje się z panelem GUI używając sygnału `tx_signal`.
+
+5.  **System Konfiguracji (JSON) i Bezpieczeństwo Danych (`cfg/`):**
+    *   **Atomowy zapis:** Wszystkie operacje zapisu (`save_config`, `save_app_settings`) zapisują dane najpierw do pliku tymczasowego `.tmp`, a następnie podmieniają plik docelowy za pomocą `os.replace()`, co zapobiega uszkodzeniu plików w razie awarii zasilania lub nagłego zamknięcia.
+    *   **Kompatybilność wsteczna:** Nowe pola muszą być zdefiniowane w `get_default_config()` i posiadać bezpieczne fallbacki w `load_config()`.
+    *   **Ochrona przed odtworzeniem:** Metody `save_current_settings_to_config` oraz `on_config_changed` weryfikują `os.path.exists()`, aby nie odtwarzać skasowanych konfiguracji.
     *   Wsparcie dla profili przypisywanych automatycznie do portów (np. `COM3.json`). Aplikacja inteligentnie podpowiada wolne porty przy tworzeniu nowych kart.
-5.  **Zarządcy (Menadżery) Tablicowi:** Konfiguracje zaawansowane korzystają z okien `QDialog` opartych na `QStackedWidget` i `QTableWidget` z przypisanymi w rzędach przyciskami (Edytuj/Usuń).
+
+6.  **Customowe Kontrolki i Dialogi:**
+    *   **`PortComboBox`:** W stanie spoczynku ma stałą szerokość `82 px` i wyświetla sam port (np. `COM20`), a po rozwinięciu (`showPopup`) rozszerza się do `320 px` z pełnym opisem ze sterownika (`COM20 — USB-SERIAL CH340`).
+    *   **`CommandLineEdit`:** Obsługuje historię komend pod strzałkami `Góra` / `Dół` i czyści się po wysłaniu.
+    *   **`SearchDialog`:** Niezależne okienko wyszukiwania w logach (`Ctrl+F`) z obsługą przeszukiwania w przód/tył i symboli wieloznacznych `*` (wildcards).
+    *   **Zarządcy (Menadżery) Tablicowi:** Okna `FilterManagerDialog` i `ParserManagerDialog` oparte na `QTableWidget` z opcją włączania/wyłączania ("Aktywny") oraz twardego sortowania.
 
 ## 3. Zrealizowane Funkcjonalności (Co już działa)
 
 ### A. Dynamiczne Przyciski (10 sztuk) i System QSS
-Oparte na systemie Qt Style Sheets (QSS) dynamicznie generowanym w `get_btn_style`. Posiadają efekty wciśnięcia (tzw. pressed, przesuwający padding o 2px) i podświetlenia (hover). Formularz edycji ukrywa niepotrzebne pola w zależności od typu (QStackedWidget).
-*   **Nieaktywne:** Szare, nasłuchujące prawego (PPM) do edycji.
+Oparte na systemie Qt Style Sheets (QSS) dynamicznie generowanym w `get_btn_style`. Posiadają efekty wciśnięcia (przesuwający padding o 2px) i podświetlenia (hover). Formularz edycji ukrywa niepotrzebne pola w zależności od typu (`QStackedWidget`).
+*   **Nieaktywne:** Kafelki ze stylem przerywanego obramowania (`dashed`), ciemnoszary tekst `+ Przypisz akcję (PPM)`.
 *   **Typ `toggle` (ON/OFF):** 🔘 Wysyła `tx_on` lub `tx_off`. Zmiana koloru następuje dopiero po sprzętowym ACK.
 *   **Typ `push` (Jednorazowe):** ⚡ Wysyłają ramkę `tx` po kliknięciu. Brak obsługi ACK.
 *   **Typ `hold` (Chwilowe):** ⏳ Wysyłają `tx_on` podczas wciśnięcia (`pressed`) i `tx_off` po puszczeniu (`released`).
 *   **Typ `macro` (Skryptowe):** 📜 Odpalają ciąg komend z opóźnieniami w tle.
-*   **Typ `trigger` (Sekwencyjne):** 🔁 (Bezczynny) / ⏹ (Pracuje). Pętla na obiekcie `QTimer` strzelająca asynchronicznie ramkami co zadany `interval` (w ms).
+*   **Typ `trigger` (Sekwencyjne):** 🔁 (Bezczynny) / ⏹ (Pracuje). Pętla na obiekcie `QTimer` wysyłająca ramki co zadany `interval` (w ms).
+*   **Dynamiczne Tooltips:** Każdy przycisk generuje dymek z pełnym podglądem nadawanych ramek TX i oczekiwanych potwierdzeń ACK.
+*   **Wyczyszczenie przycisku:** W `ButtonEditDialog` przycisk `Usuń` przywraca domyślny stan `get_default_button()`, czyszcząc przypisanie kafelka.
 
 ### B. Konsola Logów, Komunikacja i Eksport
-*   **Dwa tryby:** ASCII oraz BINARY (HEX).
-*   **Eksport Logów:** Możliwość zapisu wygenerowanej sesji do HTML (z zachowaniem kolorowania ułamków sekund), TXT oraz Markdown z wstrzykniętymi meta-danymi.
-*   **Smart Autoscroll:** Konsola inteligentnie zatrzymuje autoscroll, gdy użytkownik przewija w górę, aby przeczytać historię. Posiada dedykowany przycisk powrotu do najnowszych wiadomości.
-*   **Wyszukiwarka Logów:** Nienakładający się panel (popup pod `Ctrl+F` lub z menu PPM) umożliwiający obustronne przeszukiwanie konsoli ze wsparciem wyrażeń wieloznacznych (wildcards np. `*test*`).
-*   Zoptymalizowane globalne zamykanie aplikacji - przy zamykaniu głównego okna system pyta o zapis logów tylko raz zbiorczo, pomijając karty zawierające tylko systemowe komunikaty o połączeniu.
+*   **Dwa tryby RX:** ASCII oraz BINARY (HEX). Niezależne formatowanie TX w panelu wysyłania i na przyciskach.
+*   **Wybór znaku końca linii (`EOL`):** `CRLF (\r\n)`, `LF (\n)`, `CR (\r)` oraz `Brak EOL` z zapisem w profilu JSON pod kluczem `"eol"`.
+*   **Eksport Logów:** Zapis sesji do HTML (z kolorowaniem ułamków sekund), TXT oraz Markdown z meta-danymi.
+*   **Smart Autoscroll:** Konsola inteligentnie zatrzymuje autoscroll przy przewinięciu w górę i wyświetla przycisk powrotu do najnowszych wiadomości.
+*   **Wyszukiwarka Logów (`Ctrl+F`):** Pływający popup z obsługą przeszukiwania w przód/tył i dopasowań wieloznacznych (`*test*`).
+*   **Oznaczanie Logów (Markers):** Przycisk `📌 Marker` oraz flaga `show_marker` na przyciskach wstrzykująca nazwę akcji do logu.
 
 ### C. Zaawansowane Filtrowanie RX i Zapora
-*   Działa w oparciu o bibliotekę `fnmatch`. Posiada tryby "Ukryj" i "Koloruj". Z panelu menedżera można je dowolnie aktywować i dezaktywować za pomocą checkboxów ("Aktywny").
-*   **Tryb Zapory (Whitelist):** Trzecia akcja to "Dozwolony". Jeśli na aktywnej karcie istnieje chociaż jedna taka reguła, terminal całkowicie blokuje inne odbierane dane. Wyświetlany jest wtedy agresywny, czerwony przycisk "⚠ ZAPORA", który otwiera wyselekcjonowanego Menadżera Filtrów pokazującego tylko dozwolone reguły.
+*   Oparte o bibliotekę `fnmatch` (wildcardy `*...*`). Tryby: "Ukryj", "Koloruj" oraz "Dozwolony (Whitelist)".
+*   **Szybkie dodawanie z zaznaczenia konsoli (PPM):** Menu kontekstowe `🌪️ Dodaj do Filtra (*tekst*)` oraz `🧩 Dodaj do Parsera (*tekst*)` automatycznie normalizuje frazę, otacza ją gwiazdkami, kopiuje do schowka, otwiera zwijany panel i ustawia fokus klawiatury.
+*   **Tryb Zapory (Whitelist):** Jeżeli na aktywnej karcie istnieje reguła "Dozwolony", terminal całkowicie blokuje pozostałe dane i wyświetla czerwony przycisk `⚠ ZAPORA`.
 
+### D. Sterowanie Sprzętowe i Prędkości Transmisji
+*   **Ukryte menu sprzętowe (`⚙️` obok `Połącz`):** Przełączanie linii `DTR` i `RTS` oraz generowanie 100 ms impulsu resetu MCU (`🔄 Impuls Reset MCU`).
+*   **Elastyczny Baudrate:** Standardowe prędkości aż do 1 000 000 bps + opcja `Własny...` (`QInputDialog`) dla dowolnych niestandardowych wartości.
 
-### D. Nowe funkcje (Ostatnia sesja)
-*   **Oznaczanie Logów (Markers):** Każdy przycisk posiada nową flagę show_marker. Jeśli jest włączona, przycisk dołącza swoją nazwę do wysyłanego logu na konsoli (np. [Dioda ON]), co jest niezwykle użyteczne w pętlach Trigger i Macro.
-*   **Sortowanie Konfiguracji:** Twarde sortowanie w pamięci po kliknięciu w nagłówki tabel (Wzór, Akcja, Zastąp) w Menedżerach Filtrów i Parserów. Sortowanie modyfikuje stan struktury JSON, dzięki czemu porządek zostaje zachowany na stałe.
-*   **Nazewnictwo:** Projekt nosi oficjalną nazwę **Serial Commander**.
+### E. Globalny Ciemny Motyw (`DARK_STYLESHEET`)
+*   Spójna ciemna paleta inżynierska aplikacji (`#18181b`, `#27272a`, `#121214`, akcent `#228be6`).
+*   Wskaźniki stanu połączenia w tytułach kart (`🟢` połączony, `⚪` rozłączony) wraz z nazwą portu COM.
+
 ## 4. Wytyczne dla przyszłych iteracji (Rules for future development)
 
-1.  **Rozszerzanie struktury JSON:** Jeśli dodajesz nowe ustawienia, dodaj je najpierw w funkcji `get_default_config()`, a następnie obsłuż ich doczytywanie ze starych plików w `load_config()` stosując bezpieczne metody `.get()`, np. `btn_cfg.get("new_feature", default_value)`.
-2.  **Ramki z danymi (Binary/Hex):** Pamiętaj, że aplikacja ma służyć m.in. do testowania protokołów (np. `ot_app_msg_tlv`). Zawsze przewiduj, że użytkownik wpisze ramkę szesnastkową ze spacjami, dlatego zawsze używaj bezpiecznego parsowania: `bytes.fromhex(payload.replace(" ", ""))`.
-3.  **Parsowanie RX dla przycisków:** Bufor binarnego odczytu potwierdzeń (`self.rx_buffer`) musi być niezależny od bufora tekstowego (`self.text_buffer`). Gdy przycisk (toggle) odnajdzie swoje ACK w `self.rx_buffer`, musi precyzyjnie wyciąć tylko ten zidentyfikowany ciąg bajtów (`replace(ack, b'')`), aby nie zniszczyć reszty danych. Dodatkowo bufor ma zabezpieczenie przed przepełnieniem (czyszczenie powyżej 1024 bajtów).
-4.  **Autozapis:** Unikaj ciągłego, bezwarunkowego zapisu na dysk w głównej pętli. Zapisuj wywołując `self.save_current_settings_to_config(force=True)` tylko w momencie zmiany logiki konfiguracji przez usera (np. edycja przycisku, dodanie/edycja filtra).
-5.  **Edycja i Kodowanie Plików:** Ze względu na polskie znaki w kodzie (np. "Połącz", "Rozłącz") i specyfikę systemu Windows, bezwzględnie unikaj używania komend terminalowych PowerShell (takich jak `Get-Content` i `Set-Content`) do modyfikacji plików tekstowych. PowerShell domyślnie niszczy kodowanie UTF-8 bez BOM powodując tzw. mojibake. Używaj wyłącznie natywnego narzędzia `replace_file_content` lub w razie konieczności krótkich skryptów Python z `encoding="utf-8"`.
-6.  **Changelog:** Zawsze, gdy wprowadzane są jakiekolwiek zmiany w kodzie lub projekcie, bezwzględnie dodaj nowy wpis do pliku `changelog.md`. Wpis musi zawierać datę (w formacie YYYY-MM-DD) oraz zwięzły opis wprowadzonych nowości, modyfikacji lub poprawek.
+1.  **Architektura Wielowątkowości (Thread Safety):**
+    *   Komunikacja z portem szeregowym (`pyserial`) odbywa się wyłącznie w wątku `SerialWorker(QThread)` z wykorzystaniem bezpiecznej kolejki `queue.Queue()` dla danych wychodzących (`tx_queue`).
+    *   Wątki poboczne (`SerialWorker`, `MacroRunner`) nigdy nie modyfikują bezpośrednio obiektów GUI – komunikacja z głównym wątkiem odbywa się wyłącznie przez sygnały `pyqtSignal`.
+2.  **Bezpieczeństwo Plików Konfiguracyjnych (`cfg/`):**
+    *   Zapis plików `.json` (`save_config`, `save_app_settings`) musi zawsze odbywać się atomowo: najpierw zapis do pliku tymczasowego `.tmp`, a następnie podmiana przez `os.replace()`.
+    *   Każde nowe pole dodawane do konfiguracji profilu musi mieć zdefiniowaną wartość domyślną w `get_default_config()` oraz fallback w `load_config()`, aby zachować pełną kompatybilność wsteczną ze starszymi plikami `.json`.
+    *   Nigdy nie zapisuj konfiguracji do plików, które nie istnieją fizycznie na dysku (`not os.path.exists(self.current_cfg_file)`), aby uniknąć ponownego odtwarzania skasowanych profili.
+3.  **Wytyczne UI/UX i Stylistyki (Ciemny Motyw):**
+    *   Aplikacja utrzymana jest w ciemnej stylistyce inżynierskiej (`DARK_STYLESHEET`). Nowe kontrolki powinny dziedziczyć style globalne zamiast nadpisywać kolory tła na sztywno, chyba że pełnią funkcję statusową (np. `Połącz` `#228be6`, `Rozłącz` `#fa5252`, `ACK ON` `#37b24d`, `ZAPORA` `#e03131`).
+    *   **Dyscyplina szerokości w `SerialTab`:** Ze względu na tryb Split View (50% / 50%), paski narzędziowe wewnątrz karty muszą być kompaktowe, a główny widget karty musi utrzymywać politykę `QSizePolicy.Policy.Ignored` w poziomie, aby żadna z połówek ekranu nie rozpychała drugiej.
+    *   W widoku podzielonym (Split View) panele przycisków muszą zawsze znajdować się na zewnętrznych krawędziach okna (`left` dla lewej karty, `right` dla prawej karty).
+4.  **Konwencje dla Filtrów i Parserów:**
+    *   Wzorce filtrów i parserów opierają się na dopasowaniu `fnmatch` (wildcard `*tekst*`). Każda funkcja automatycznego tworzenia filtrów/parserów powinna domyślnie otaczać frazę gwiazdkami `*...*`.
+5.  **Ramki z danymi (Binary/Hex):** Pamiętaj, że aplikacja ma służyć m.in. do testowania protokołów binarnych (np. `ot_app_msg_tlv`). Zawsze przewiduj, że użytkownik wpisze ramkę szesnastkową ze spacjami, dlatego zawsze używaj bezpiecznego parsowania: `bytes.fromhex(payload.replace(" ", ""))`.
+6.  **Parsowanie RX dla przycisków:** Bufor binarnego odczytu potwierdzeń (`self.rx_buffer`) musi być niezależny od bufora tekstowego (`self.text_buffer`). Gdy przycisk (toggle) odnajdzie swoje ACK w `self.rx_buffer`, musi precyzyjnie wyciąć tylko ten zidentyfikowany ciąg bajtów (`replace(ack, b'')`), aby nie zniszczyć reszty danych. Bufor posiada zabezpieczenie przed przepełnieniem (czyszczenie powyżej 1024 bajtów).
+7.  **Autozapis:** Unikaj ciągłego, bezwarunkowego zapisu na dysk w głównej pętli. Zapisuj wywołując `self.save_current_settings_to_config(force=True)` tylko w momencie zmiany logiki konfiguracji przez usera (np. edycja przycisku, dodanie/edycja filtra).
+8.  **Edycja i Kodowanie Plików:** Ze względu na polskie znaki w kodzie (np. "Połącz", "Rozłącz") i specyfikę systemu Windows, bezwzględnie unikaj używania komend terminalowych PowerShell (takich jak `Get-Content` i `Set-Content`) do modyfikacji plików tekstowych. PowerShell domyślnie niszczy kodowanie UTF-8 bez BOM powodując tzw. mojibake. Używaj wyłącznie natywnego narzędzia `replace_file_content` lub w razie konieczności krótkich skryptów Python z `encoding="utf-8"`.
+9.  **Changelog:** Zawsze, gdy wprowadzane są jakiekolwiek zmiany w kodzie lub projekcie, bezwzględnie dodaj nowy wpis do pliku `changelog.md`. Wpis musi zawierać numer wersji i datę (w formacie YYYY-MM-DD) oraz zwięzły opis wprowadzonych nowości, modyfikacji lub poprawek w podziale na sekcje (*Added*, *Changed*, *Fixed*).
+
 ## 5. Do poprawy i wdrożenia na przyszłe sesje
-*   **Refaktoryzacja gui.py:** Plik staje się bardzo duży (tzw. monolith). Należy rozważyć podzielenie go na struktury MVC lub przynajmniej wyniesienie klas zdefiniowanych jako QDialog oraz komponentów pracujących w wątkach (np. MacroRunner, SerialWorker) do osobnych plików modułów (np. w folderze components/).
-*   **Dodatkowa walidacja HEX:** Makra i przyciski wysyłają obecnie kod przy cichej akceptacji ewentualnych błędów. Przydałby się szerszy system raportowania użytkownikowi błędów parsowania komend (aby nie ignorować błędów wprowadzania za pomocą gołego bloku except Exception as e: pass).
-*   **Rozszerzenie makr:** Warto by było dodać funkcjonalność pętli dla makr (np. loop(5)) i wsparcie dla warunkowego czekania na odpowiedź (np. wait_for(ACK_HEX, timeout)), co stworzyłoby kompletny język skryptowy testowania HMI.
+*   **Refaktoryzacja gui.py:** Plik osiągnął ponad 3000 linii kodu (tzw. monolith). Należy rozważyć podzielenie go na strukturę modułową w podfolderach (np. `components/` dla kontrolek i paneli, `dialogs/` dla okien modalnych, `workers/` dla wątków pobocznych `SerialWorker` i `MacroRunner`).
+*   **Dodatkowa walidacja HEX:** Makra i przyciski wysyłają obecnie kod przy cichej akceptacji ewentualnych błędów. Przydałby się szerszy system raportowania błędów parsowania komend użytkownikowi (aby nie ignorować błędów wprowadzania za pomocą gołego bloku `except Exception as e: pass`).
+*   **Rozszerzenie makr:** Warto dodać funkcjonalność pętli dla makr (np. `loop(5)`) i wsparcie dla warunkowego czekania na odpowiedź (np. `wait_for(ACK_HEX, timeout)`), co stworzyłoby kompletny język skryptowy testowania HMI.

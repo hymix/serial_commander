@@ -1,8 +1,10 @@
 {
-    "port": "COM14",
+    "port": "COM19",
     "baudrate": 115200,
     "mode": "ASCII",
+    "eol": "CRLF",
     "filters": [],
+    "parsers": [],
     "buttons": [
         {
             "id": 1,
