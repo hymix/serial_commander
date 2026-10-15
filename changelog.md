@@ -2,6 +2,35 @@
 
 Wszystkie znaczące zmiany w tym projekcie będą udokumentowane w tym pliku.
 
+## [1.6.0] - 2026-10-15
+
+### Added
+- **Moduł Telemetrii `📌 Live Watch` (`LiveWatchRowWidget`):**
+  - Dedykowany panel nad główną konsolą służący do przypinania i odświeżania w jednym miejscu powtarzalnych ramek diagnostycznych i telemetrycznych (np. statusów GPIO, pomiarów ADC, ramek CAN/FDCAN).
+  - **Token Diffing & Błysk Zmian (Flash):** Inteligentny algorytm oparty na `difflib.SequenceMatcher` rozbija ramki na pojedyncze tokeny (słowa, liczby, symbole, białe znaki) i porównuje nową wartość z poprzednią. Zmienione dane błyskają na złoto-pomarańczowo (`#5c3c00` / `#ffd43b`) przez `750 ms` (`FLASH_DURATION = 0.75s`), z wygaszaniem odświeżanym przez centralny `watch_decay_timer` co `100 ms`.
+  - **Podwójny tryb aktywacji:**
+    - **Automatyczny:** Rozpoznawanie prefiksu `@` na początku odebranej linii z mikrokontrolera (np. `@[IO_MGR] BTN: 0x01 | ADC: 512`), automatyczne wyciągnięcie klucza w nawiasach `[...]` lub do pierwszego dwukropka/spacji, przypięcie do wiersza Live Watch oraz usunięcie znaku `@`.
+    - **Ręczny z konsoli:** Menu kontekstowe PPM po kliknięciu na linię logu z opcją `📌 Przypnij do Live Watch ('klucz')`.
+  - **Filtrowanie strumienia konsoli i ergonomia:**
+    - Przypięte ramki są domyślnie ukrywane w głównym oknie konsoli poniżej, aby nie powodować uciekania historii logów (z możliwością włączenia podglądu w konsoli przez opcję `Pokaż też w konsoli`, zapamiętywaną w profilu jako `watch_print_in_console`).
+    - **Ochrona geometrii konsoli:** Panel Live Watch skaluje się dynamicznie maksymalnie do **70% wysokości konsoli**, po czym automatycznie aktywuje pionowy pasek przewijania (`QScrollArea`), gwarantując stałą widoczność logów poniżej.
+    - Przycisk zwijania `▲ Ukryj / ▼ Pokaż` po prawej stronie oraz przycisk `Odepnij wszystkie`.
+    - Licznik odebranych aktualizacji (`#N`) dla każdego wiersza Live Watch oraz przycisk odpinania pojedynczego wiersza (`✕`).
+- **Zautomatyzowany Generator Dokumentacji Technicznej (`build_docs/`):**
+  - **Generator PDF i PPTX (`build_docs.py`):** Skrypt generujący 11-slajdową instrukcję PDF (`Serial_Commander_Instrukcja.pdf`) przy użyciu `QPdfWriter` i `QPainter` oraz prezentację PowerPoint (`Serial_Commander_Prezentacja.pptx`) z wektorowymi znacznikami, strzałkami i opisami nanoszonymi na zrzuty ekranu.
+  - **Automatyczny porządkujący (`cleanup_screenshots.py`):** Skrypt weryfikujący kompletność wymaganych zrzutów ekranu oraz archiwizujący nieużywane pliki graficzne do folderu `_nieuzywane_zrzuty/`.
+  - **Podręcznik użytkownika `INSTRUKCJA.md`:** Kompletna dokumentacja techniczna opisująca wszystkie funkcje programu (interfejs, Live Watch, Split View 50/50, filtry, parsery, sterowanie sprzętowe, makra).
+
+### Changed
+- Podniesiono wersję aplikacji do `1.6.0` (`APP_VERSION = "1.6.0"`).
+- Rozszerzono strukturę profilu konfiguracyjnego JSON o opcje `watch_patterns` oraz `watch_print_in_console`.
+- Rozbudowano menu kontekstowe konsoli (PPM) o akcję przypinania logów do Live Watch.
+- Uporządkowano plik `.gitignore` o ignorowanie katalogów tymczasowych dokumentacji (`_nieuzywane_zrzuty/`, `annotated_tmp/`) oraz plików tymczasowych (`*.tmp`).
+
+### Fixed
+- **Kompatybilność z Python 3.8+:** Wprowadzono `from __future__ import annotations` oraz wyeliminowano użycie generyków PEP 585 w sygnaturach bez odpowiednich importów, zapewniając pełną zgodność z Pythonem 3.8 i nowszymi.
+- **Ochrona układu GUI przed przepełnieniem:** Wdrożono limit wysokości panelu Live Watch (maks. 70% konsoli) z elastycznym przewijaniem, zapobiegając wypychaniu konsoli logów poza widoczny obszar ekranu przy dużej liczbie przypiętych zmiennych.
+
 ## [1.5.0] - 2026-10-15
 
 ### Added

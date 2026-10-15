@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import sys
 import json
 import os
@@ -5,6 +7,9 @@ import argparse
 import fnmatch
 import queue
 import re
+import time
+import difflib
+import html as html_lib
 import serial
 import serial.tools.list_ports
 from datetime import datetime
@@ -19,7 +24,7 @@ from PyQt6.QtGui import QIcon, QPixmap, QColor, QTextDocument, QTextCursor, QSho
 
 CFG_DIR = "cfg"
 APP_SETTINGS_FILE = os.path.join(CFG_DIR, "app_settings.json")
-APP_VERSION = "1.5.0"
+APP_VERSION = "1.6.0"
 
 # ==========================================
 # GLOBALNY MOTYW CIEMNY (QSS)
@@ -118,6 +123,12 @@ QFrame#CollapsiblePanel {
     border: 1px solid #323238;
     border-radius: 5px;
 }
+QFrame#LiveWatchFrame {
+    background-color: #16161a;
+    border: 1px solid #2e3440;
+    border-left: 3px solid #fcc419;
+    border-radius: 4px;
+}
 QFrame#SplitCardHeader {
     background-color: #232329;
     border-top: 2px solid #228be6;
@@ -171,6 +182,8 @@ def get_default_config():
         "eol": "CRLF",
         "filters": [],
         "parsers": [],
+        "watch_patterns": [],
+        "watch_print_in_console": False,
         "buttons": [get_default_button(i + 1) for i in range(10)]
     }
     return config
@@ -186,6 +199,10 @@ def load_config(filepath):
                     config["filters"] = []
                 if "parsers" not in config:
                     config["parsers"] = []
+                if "watch_patterns" not in config:
+                    config["watch_patterns"] = []
+                if "watch_print_in_console" not in config:
+                    config["watch_print_in_console"] = False
                 if "eol" not in config:
                     config["eol"] = "CRLF"
         except Exception as e:
@@ -232,7 +249,7 @@ def populate_color_combo(combo):
         combo.setItemData(combo.count() - 1, name, Qt.ItemDataRole.ToolTipRole)
 
 # ==========================================
-# CUSTOMOWE KONTROLKI (PortComboBox, CommandLineEdit)
+# CUSTOMOWE KONTROLKI (PortComboBox, CommandLineEdit, LiveWatchRowWidget)
 # ==========================================
 class PortComboBox(QComboBox):
     """W spoczynku wyświetla tylko krótki kod portu (np. COM20), a po rozwinięciu pełny opis urządzenia."""
@@ -281,6 +298,98 @@ class CommandLineEdit(QLineEdit):
                 self.clear()
         else:
             super().keyPressEvent(event)
+
+
+class LiveWatchRowWidget(QFrame):
+    """Pojedynczy wiersz przypiętego logu w panelu Live Watch z błyskiem zmienionych tokenów."""
+    unpin_requested = pyqtSignal(str)
+    FLASH_DURATION = 0.75  # Czas trwania błysku zmiany w sekundach (750 ms)
+
+    def __init__(self, key: str, parent=None):
+        super().__init__(parent)
+        self.key = key
+        self.tokens = []
+        self.flash_until = []
+        self.last_ts = ""
+        self.update_count = 0
+
+        self.setStyleSheet("""
+            QFrame {
+                background-color: #1c1c22;
+                border: 1px solid #2d2d35;
+                border-radius: 3px;
+            }
+        """)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(6, 2, 4, 2)
+        layout.setSpacing(6)
+
+        self.lbl_content = QLabel()
+        self.lbl_content.setTextFormat(Qt.TextFormat.RichText)
+        self.lbl_content.setStyleSheet("font-family: 'Consolas', 'JetBrains Mono', monospace; font-size: 12px; border: none; background: transparent;")
+        self.lbl_content.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        layout.addWidget(self.lbl_content, stretch=1)
+
+        self.lbl_counter = QLabel("#0")
+        self.lbl_counter.setStyleSheet("color: #71717a; font-size: 11px; font-family: monospace; border: none; background: transparent;")
+        self.lbl_counter.setToolTip("Liczba odebranych aktualizacji tego wiersza")
+        layout.addWidget(self.lbl_counter)
+
+        self.btn_unpin = QPushButton("✕")
+        self.btn_unpin.setFixedSize(18, 18)
+        self.btn_unpin.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_unpin.setToolTip(f"Odepnij '{key}' z Live Watch")
+        self.btn_unpin.setStyleSheet("""
+            QPushButton { padding: 0px; background: transparent; border: none; color: #71717a; font-weight: bold; font-size: 11px; }
+            QPushButton:hover { background-color: #fa5252; color: white; border-radius: 2px; }
+        """)
+        self.btn_unpin.clicked.connect(lambda: self.unpin_requested.emit(self.key))
+        layout.addWidget(self.btn_unpin)
+
+    def update_message(self, msg: str, timestamp: str):
+        now = time.monotonic()
+        self.last_ts = timestamp
+        self.update_count += 1
+        self.lbl_counter.setText(f"#{self.update_count}")
+
+        # Podział linii na białe znaki, słowa/liczby oraz pojedyncze symbole (np. '*')
+        new_tokens = re.findall(r'\s+|[A-Za-z0-9_.\-+%]+|.', msg)
+
+        if not self.tokens:
+            self.tokens = new_tokens
+            self.flash_until = [0.0] * len(new_tokens)
+        else:
+            sm = difflib.SequenceMatcher(None, self.tokens, new_tokens)
+            new_flash = [0.0] * len(new_tokens)
+            for tag, i1, i2, j1, j2 in sm.get_opcodes():
+                if tag == 'equal':
+                    for old_i, new_j in zip(range(i1, i2), range(j1, j2)):
+                        if old_i < len(self.flash_until):
+                            new_flash[new_j] = self.flash_until[old_i]
+                elif tag in ('replace', 'insert'):
+                    for new_j in range(j1, j2):
+                        if not new_tokens[new_j].isspace():
+                            new_flash[new_j] = now + self.FLASH_DURATION
+            self.tokens = new_tokens
+            self.flash_until = new_flash
+
+        self.render_html(now)
+
+    def render_html(self, now: float) -> bool:
+        """Renderuje wiersz z podświetleniem zmienionych tokenów. Zwraca True, jeśli któryś token jeszcze błyska."""
+        has_active_flash = False
+        parts = [f'<span style="color: #69db7c; font-weight: bold;">{html_lib.escape(self.last_ts)}</span> ']
+        for tok, exp in zip(self.tokens, self.flash_until):
+            esc = html_lib.escape(tok)
+            if exp > now and not tok.isspace():
+                has_active_flash = True
+                # Błysk zmienionej wartości: złoto-pomarańczowe tło i jasny tekst
+                parts.append(f'<span style="background-color: #5c3c00; color: #ffd43b; font-weight: bold;">{esc}</span>')
+            else:
+                parts.append(f'<span style="color: #e4e4e7;">{esc}</span>')
+        self.lbl_content.setText("".join(parts))
+        return has_active_flash
+
 
 # ==========================================
 # 2. OKNA DIALOGOWE EDYCJI
@@ -1175,7 +1284,6 @@ class SerialTab(QWidget):
         super().__init__(parent)
         self.main_window = main_window
         
-        # Ignorowanie minimalnego rozmiaru w poziomie gwarantuje idealny podział 50%/50% w widoku Split
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
         
         if not os.path.exists(CFG_DIR):
@@ -1186,7 +1294,14 @@ class SerialTab(QWidget):
         self.text_buffer = ""
         self.has_real_logs = False
         self._last_valid_baud = "115200"
-        self.panel_side = "left" # "left" lub "right"
+        self.panel_side = "left"
+        
+        # Struktury dla Live Watch
+        self.watch_rows = {} # key -> LiveWatchRowWidget
+        self.watch_body_visible = True
+        self.watch_decay_timer = QTimer(self)
+        self.watch_decay_timer.setInterval(100)
+        self.watch_decay_timer.timeout.connect(self.on_watch_flash_decay)
         
         self.button_states = [False] * 10 
         self.button_timers = [QTimer(self) for _ in range(10)]
@@ -1204,7 +1319,7 @@ class SerialTab(QWidget):
         outer_layout.setContentsMargins(4, 4, 4, 4)
         outer_layout.setSpacing(4)
 
-        # --- NAGŁÓWEK KARTY W TRYBIE SPLIT VIEW (Z rozwijanym menu innych kart w miejscu nazwy) ---
+        # --- NAGŁÓWEK KARTY W TRYBIE SPLIT VIEW ---
         self.card_header = QFrame()
         self.card_header.setObjectName("SplitCardHeader")
         self.card_header.setFixedHeight(34)
@@ -1216,7 +1331,6 @@ class SerialTab(QWidget):
         self.lbl_side_badge.setStyleSheet("color: #74c0fc; font-weight: bold; font-size: 11px; background: transparent;")
         header_layout.addWidget(self.lbl_side_badge)
 
-        # Przycisk w miejscu nazwy profilu otwierający menu przełączania na inną kartę (bez bieżącej)
         self.btn_card_selector = QPushButton("⚪ COM — Profil ▾")
         self.btn_card_selector.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_card_selector.setToolTip("Kliknij, aby przełączyć to okno na inną otwartą kartę")
@@ -1341,7 +1455,7 @@ class SerialTab(QWidget):
         left_panel_layout.addLayout(cfg_layout)
 
         # ------------------------------------------
-        # CZĘŚĆ GŁÓWNA: Pasek Połączenia -> Narzędzia -> Konsola -> Input
+        # CZĘŚĆ GŁÓWNA: Pasek Połączenia -> Narzędzia -> Live Watch -> Konsola -> Input
         # ------------------------------------------
         self.right_panel_widget = QWidget()
         self.right_panel_widget.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
@@ -1353,7 +1467,6 @@ class SerialTab(QWidget):
         top_bar_layout = QHBoxLayout()
         top_bar_layout.setSpacing(5)
         
-        # Przycisk rozwijania panelu na LEWYM skraju (dla karty lewej lub pojedynczej)
         self.btn_show_left = QPushButton("▶ Akcje")
         self.btn_show_left.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_show_left.setToolTip("Pokaż panel szybkich akcji (po lewej stronie)")
@@ -1434,7 +1547,6 @@ class SerialTab(QWidget):
         self.btn_toggle_tools.toggled.connect(self.toggle_tools_panel)
         top_bar_layout.addWidget(self.btn_toggle_tools)
 
-        # Przycisk rozwijania panelu na PRAWYM skraju (dla prawej karty w widoku podzielonym)
         self.btn_show_right = QPushButton("Akcje ◀")
         self.btn_show_right.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_show_right.setToolTip("Pokaż panel szybkich akcji (po prawej stronie)")
@@ -1540,6 +1652,61 @@ class SerialTab(QWidget):
         self.tools_frame.setVisible(False)
         right_layout.addWidget(self.tools_frame)
 
+        # --- PANEL LIVE WATCH (PRZYPIĘTE LOGI TELEMETRYCZNE U GÓRY KONSOLI) ---
+        self.watch_frame = QFrame()
+        self.watch_frame.setObjectName("LiveWatchFrame")
+        watch_vbox = QVBoxLayout(self.watch_frame)
+        watch_vbox.setContentsMargins(8, 4, 8, 6)
+        watch_vbox.setSpacing(4)
+
+        watch_header = QHBoxLayout()
+        watch_header.setSpacing(8)
+        self.lbl_watch_title = QLabel("📌 Live Watch (0)")
+        self.lbl_watch_title.setStyleSheet("color: #fcc419; font-weight: bold; font-size: 12px; background: transparent;")
+        self.lbl_watch_title.setToolTip("Przypięte logi aktualizowane w miejscu (prefiks '@' z MCU lub PPM w konsoli -> Przypnij)")
+        watch_header.addWidget(self.lbl_watch_title)
+
+        self.cb_watch_print = QCheckBox("Pokaż też w konsoli")
+        self.cb_watch_print.setStyleSheet("color: #a1a1aa; font-size: 11px; background: transparent;")
+        self.cb_watch_print.setToolTip("Gdy odznaczone, przypięte ramki są ukrywane w głównej konsoli na dole")
+        self.cb_watch_print.toggled.connect(self.on_watch_print_toggled)
+        watch_header.addWidget(self.cb_watch_print)
+
+        watch_header.addStretch()
+
+        self.btn_clear_watches = QPushButton("Odepnij wszystkie")
+        self.btn_clear_watches.setFixedHeight(20)
+        self.btn_clear_watches.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_clear_watches.setStyleSheet("QPushButton { padding: 1px 6px; font-size: 11px; color: #a1a1aa; }")
+        self.btn_clear_watches.clicked.connect(self.clear_all_watches)
+        watch_header.addWidget(self.btn_clear_watches)
+
+        # Mały przycisk po prawej stronie do ukrycia/odkrycia przypiętych logów (domyślnie odkryty)
+        self.btn_toggle_watch_body = QPushButton("▲ Ukryj")
+        self.btn_toggle_watch_body.setFixedHeight(20)
+        self.btn_toggle_watch_body.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_toggle_watch_body.setToolTip("Zwiń / Rozwiń listę przypiętych wierszy Live Watch")
+        self.btn_toggle_watch_body.setStyleSheet("QPushButton { padding: 1px 8px; font-size: 11px; font-weight: bold; color: #fcc419; border-color: #fcc419; }")
+        self.btn_toggle_watch_body.clicked.connect(self.toggle_watch_body)
+        watch_header.addWidget(self.btn_toggle_watch_body)
+
+        watch_vbox.addLayout(watch_header)
+
+        # Obszar przewijany (suwak pojawia się automatycznie, gdy wysokość przekroczy 70% konsoli)
+        self.watch_scroll = QScrollArea()
+        self.watch_scroll.setWidgetResizable(True)
+        self.watch_scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        self.watch_list_container = QWidget()
+        self.watch_list_container.setStyleSheet("background: transparent;")
+        self.watch_list_layout = QVBoxLayout(self.watch_list_container)
+        self.watch_list_layout.setContentsMargins(0, 0, 0, 0)
+        self.watch_list_layout.setSpacing(3)
+        self.watch_scroll.setWidget(self.watch_list_container)
+        watch_vbox.addWidget(self.watch_scroll)
+
+        self.watch_frame.hide()
+        right_layout.addWidget(self.watch_frame)
+
         # --- KONSOLA GŁÓWNA ---
         self.console = QTextEdit()
         self.console.setReadOnly(True)
@@ -1627,6 +1794,164 @@ class SerialTab(QWidget):
         self.refresh_configs_list(select_file=target_cfg)
 
     # ==========================================
+    # OBSŁUGA LIVE WATCH (PRZYPINANIE, BŁYSKI, 70% WYSOKOŚCI)
+    # ==========================================
+    def strip_rx_prefix(self, line: str) -> str:
+        """Usuwa prefiks 'RX [HH:MM:SS.mmm]: ' jeśli użytkownik zaznaczył linię w konsoli."""
+        return re.sub(r'^(?:RX|TX)\s*\[\d{2}:\d{2}:\d{2}\.\d{3}\]:\s*', '', line.strip())
+
+    def extract_watch_key(self, msg: str) -> str:
+        """Wyciąga klucz identyfikujący wiadomość (np. '[IO_MGR]' lub pierwsze słowo/tag przed dwukropkiem)."""
+        clean = self.strip_rx_prefix(msg).lstrip('@').strip()
+        if not clean:
+            return ""
+        # 1. Jeśli zaczyna się od tagu w nawiasie kwadratowym, np. [IO_MGR] BTN: ...
+        m = re.match(r'^(\[[^\]]+\])', clean)
+        if m:
+            return m.group(1)
+        # 2. Jeśli ma postać NAZWA: wartość
+        if ':' in clean:
+            prefix = clean.split(':', 1)[0].strip()
+            if 1 <= len(prefix) <= 28:
+                return prefix
+        # 3. Pierwszy wyraz
+        parts = clean.split()
+        return parts[0][:28] if parts else ""
+
+    def pin_to_live_watch(self, key: str, initial_msg: str = ""):
+        key = key.strip()
+        if not key:
+            return
+        patterns = self.app_config.setdefault("watch_patterns", [])
+        if key not in patterns:
+            patterns.append(key)
+            self.save_current_settings_to_config(force=True)
+
+        if key not in self.watch_rows:
+            row = LiveWatchRowWidget(key, self)
+            row.unpin_requested.connect(self.unpin_live_watch)
+            self.watch_rows[key] = row
+            self.watch_list_layout.addWidget(row)
+
+        if initial_msg:
+            clean_msg = self.strip_rx_prefix(initial_msg).lstrip('@').strip()
+            self.watch_rows[key].update_message(clean_msg, self.get_timestamp())
+            if not self.watch_decay_timer.isActive():
+                self.watch_decay_timer.start()
+
+        self.update_watch_panel_geometry()
+
+    def unpin_live_watch(self, key: str):
+        patterns = self.app_config.get("watch_patterns", [])
+        if key in patterns:
+            patterns.remove(key)
+            self.save_current_settings_to_config(force=True)
+        row = self.watch_rows.pop(key, None)
+        if row:
+            row.setParent(None)
+            row.deleteLater()
+        self.update_watch_panel_geometry()
+
+    def clear_all_watches(self):
+        self.app_config["watch_patterns"] = []
+        self.save_current_settings_to_config(force=True)
+        for row in self.watch_rows.values():
+            row.setParent(None)
+            row.deleteLater()
+        self.watch_rows.clear()
+        self.update_watch_panel_geometry()
+
+    def toggle_watch_body(self):
+        self.watch_body_visible = not self.watch_body_visible
+        self.watch_scroll.setVisible(self.watch_body_visible)
+        self.btn_toggle_watch_body.setText("▲ Ukryj" if self.watch_body_visible else "▼ Pokaż")
+        self.update_watch_panel_geometry()
+
+    def on_watch_print_toggled(self, checked: bool):
+        self.app_config["watch_print_in_console"] = checked
+        self.save_current_settings_to_config(force=True)
+
+    def update_watch_panel_geometry(self):
+        count = len(self.watch_rows)
+        self.lbl_watch_title.setText(f"📌 Live Watch ({count})")
+        if count == 0:
+            self.watch_frame.hide()
+            return
+
+        self.watch_frame.show()
+        if not self.watch_body_visible:
+            self.watch_scroll.hide()
+            self.watch_frame.setFixedHeight(34)
+            return
+
+        self.watch_scroll.show()
+        self.watch_frame.setMinimumHeight(0)
+        self.watch_frame.setMaximumHeight(16777215)
+
+        # Oblicz 70% dostępnej przestrzeni pionowej (konsola + watch_frame)
+        available_h = self.console.height() + (self.watch_frame.height() if self.watch_frame.isVisible() else 0)
+        if available_h < 150:
+            available_h = max(350, self.height() - 160)
+        max_watch_h = max(65, int(available_h * 0.70))
+
+        row_h = 29
+        content_h = count * row_h + 4
+        scroll_h = min(content_h, max_watch_h - 34)
+        self.watch_scroll.setFixedHeight(max(28, scroll_h))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self.watch_rows:
+            self.update_watch_panel_geometry()
+
+    def on_watch_flash_decay(self):
+        now = time.monotonic()
+        any_active = False
+        for row in self.watch_rows.values():
+            if row.render_html(now):
+                any_active = True
+        if not any_active:
+            self.watch_decay_timer.stop()
+
+    def handle_incoming_watch_check(self, raw_msg: str, ts: str):
+        """
+        Sprawdza, czy odebrana wiadomość ma trafić do Live Watch (przez prefiks '@' lub dopasowanie klucza).
+        Zwraca (matched_watch, clean_msg).
+        """
+        stripped = raw_msg.strip()
+        auto_pin = False
+        if stripped.startswith('@'):
+            auto_pin = True
+            stripped = stripped[1:].strip()
+
+        matched_key = None
+        for pattern in self.app_config.get("watch_patterns", []):
+            if stripped.startswith(pattern) or fnmatch.fnmatch(stripped, f"*{pattern}*"):
+                matched_key = pattern
+                break
+
+        if auto_pin and not matched_key:
+            matched_key = self.extract_watch_key(stripped)
+            if matched_key and matched_key not in self.app_config.get("watch_patterns", []):
+                self.app_config.setdefault("watch_patterns", []).append(matched_key)
+                self.save_current_settings_to_config(force=True)
+
+        if matched_key:
+            if matched_key not in self.watch_rows:
+                row = LiveWatchRowWidget(matched_key, self)
+                row.unpin_requested.connect(self.unpin_live_watch)
+                self.watch_rows[matched_key] = row
+                self.watch_list_layout.addWidget(row)
+                self.update_watch_panel_geometry()
+
+            self.watch_rows[matched_key].update_message(stripped, ts)
+            if not self.watch_decay_timer.isActive():
+                self.watch_decay_timer.start()
+            return True, stripped
+
+        return False, raw_msg
+
+    # ==========================================
     # MENU WYBORU KARTY W NAGŁÓWKU (POMIJA BIEŻĄCĄ KARTĘ)
     # ==========================================
     def populate_card_switch_menu(self):
@@ -1662,7 +1987,6 @@ class SerialTab(QWidget):
     # POZYCJONOWANIE PANELU AKCJI (LEWA / PRAWA KRAWĘDŹ)
     # ==========================================
     def set_panel_side(self, side: str, show_header: bool = False):
-        """Ustawia położenie panelu przycisków ('left' lub 'right') oraz widoczność paska tytułu."""
         self.panel_side = side
         self.card_header.setVisible(show_header)
         
@@ -1885,6 +2209,17 @@ class SerialTab(QWidget):
         self.combo_eol.setCurrentIndex(eol_map.get(self.app_config.get("eol", "CRLF"), 0))
         self.combo_eol.blockSignals(False)
 
+        self.cb_watch_print.blockSignals(True)
+        self.cb_watch_print.setChecked(self.app_config.get("watch_print_in_console", False))
+        self.cb_watch_print.blockSignals(False)
+
+        # Wyczyść widżety watch przy zmianie profilu (pojawią się ponownie po odebraniu pasujących ramek)
+        for row in self.watch_rows.values():
+            row.setParent(None)
+            row.deleteLater()
+        self.watch_rows.clear()
+        self.update_watch_panel_geometry()
+
         for i in range(10):
             self.button_states[i] = False 
             self.setup_button(i)
@@ -1931,6 +2266,7 @@ class SerialTab(QWidget):
             
         for t in self.button_timers:
             t.stop()
+        self.watch_decay_timer.stop()
             
         for runner in self.macro_runners:
             if runner.isRunning():
@@ -2080,7 +2416,6 @@ class SerialTab(QWidget):
     # SZYBKIE DODAWANIE ZAZNACZENIA DO FILTRA / PARSERA (PPM)
     # ==========================================
     def format_wildcard_selection(self, raw_text: str) -> str:
-        """Oczyszcza zaznaczony tekst i otacza go gwiazdkami *nazwa*."""
         clean = raw_text.replace('\u2029', ' ').replace('\n', ' ').replace('\r', ' ').strip()
         clean = clean.strip('*').strip()
         return f"*{clean}*" if clean else ""
@@ -2193,13 +2528,18 @@ class SerialTab(QWidget):
         self.append_html_no_autoscroll(f'<span style="color: #4dabf7;">TX {self.get_timestamp()}: </span>{marker_html}<span style="color: #74c0fc;">{msg}</span>')
 
     def log_rx(self, msg):
-        should_hide, parsed_msg, text_color = self.process_message_filters(msg)
+        ts = self.get_timestamp()
+        matched_watch, clean_msg = self.handle_incoming_watch_check(msg, ts)
+        if matched_watch and not self.cb_watch_print.isChecked():
+            self.has_real_logs = True
+            return
+
+        should_hide, parsed_msg, text_color = self.process_message_filters(clean_msg)
         if should_hide:
             return
             
         self.has_real_logs = True
-        ts = self.get_timestamp()
-        self.append_html_no_autoscroll(f'<span style="color: #69db7c;">RX {ts}: </span><span style="color: {text_color};">{parsed_msg}</span>')
+        self.append_html_no_autoscroll(f'<span style="color: #69db7c;">RX {ts}: </span><span style="color: {text_color};">{html_lib.escape(parsed_msg)}</span>')
 
     def log_info(self, msg):
         self.append_html_no_autoscroll(f'<span style="color: #71717a; font-style: italic;">ℹ {self.get_timestamp()} {msg}</span>')
@@ -2247,12 +2587,25 @@ class SerialTab(QWidget):
         menu = self.console.createStandardContextMenu()
         selected = self.console.textCursor().selectedText().strip()
         
+        # Pobierz też całą linię pod kursorem (do szybkiego przypięcia do Live Watch bez konieczności zaznaczania)
+        cursor_at_pos = self.console.cursorForPosition(pos)
+        line_text = cursor_at_pos.block().text().strip()
+        clean_line = self.strip_rx_prefix(line_text)
+
+        menu.addSeparator()
+
+        # Opcja Przypnij do Live Watch (z zaznaczenia lub automatycznie z klucza linii pod kursorem)
+        pin_key = self.strip_rx_prefix(selected) if selected and len(selected) <= 32 else self.extract_watch_key(clean_line)
+        if pin_key:
+            act_pin = QAction(f"📌 Przypnij do Live Watch ({pin_key})", self)
+            act_pin.triggered.connect(lambda checked=False, k=pin_key, ln=clean_line: self.pin_to_live_watch(k, ln))
+            menu.addAction(act_pin)
+
         if selected:
             preview = selected.replace('\u2029', ' ').strip('*').strip()
             if len(preview) > 22:
                 preview = preview[:22] + "..."
                 
-            menu.addSeparator()
             act_to_filter = QAction(f"🌪️ Dodaj do Filtra (*{preview}*)", self)
             act_to_filter.triggered.connect(lambda checked=False, txt=selected: self.quick_send_to_filter(txt))
             menu.addAction(act_to_filter)
@@ -2708,7 +3061,7 @@ class MainWindow(QMainWindow):
         self.tabs.setCornerWidget(corner_widget, Qt.Corner.TopRightCorner)
         self.view_stack.addWidget(self.tabs)
 
-        # Strona 1: Symetryczny kontener 50% / 50% (gwarantuje idealne wypośrodkowanie obu okien)
+        # Strona 1: Symetryczny kontener 50% / 50%
         self.split_container = QWidget()
         self.split_layout = QHBoxLayout(self.split_container)
         self.split_layout.setContentsMargins(4, 4, 4, 4)
@@ -2735,7 +3088,6 @@ class MainWindow(QMainWindow):
     # LOGIKA WYBORU KART I ROZMIARU OKNA
     # ==========================================
     def adjust_window_size_for_mode(self, split_active: bool):
-        """Automatycznie rozszerza okno dla widoku dwóch kart i zmniejsza z powrotem dla widoku jednej karty."""
         if split_active == self._last_mode_was_split:
             return
         self._last_mode_was_split = split_active
@@ -2773,7 +3125,6 @@ class MainWindow(QMainWindow):
             self.lbl_hidden_tabs.setText("•  Kliknij nazwę profilu w nagłówku karty, aby przełączyć okno")
 
     def switch_split_card(self, side: str, target_tab):
-        """Wywoływane po wybraniu innej karty z rozwijanego menu w nagłówku lewego lub prawego okna."""
         if target_tab not in self.tab_list:
             return
         if side == "left":
@@ -2832,12 +3183,10 @@ class MainWindow(QMainWindow):
         self.switch_split_card(side, tab)
 
     def rebuild_view_layout(self, auto_collapse_on_split=False):
-        """Przebudowuje główny układ okna pomiędzy QTabWidget a symetrycznym układem 50%/50%."""
         count = len(self.tab_list)
         if count < 2:
             self.is_split_mode = False
             
-        # Odłącz wszystkie karty z QTabWidget oraz split_layout bez ich niszczenia
         self.tabs.blockSignals(True)
         while self.tabs.count() > 0:
             self.tabs.removeTab(0)
@@ -2864,7 +3213,6 @@ class MainWindow(QMainWindow):
             left_tab = self.split_left_tab
             right_tab = self.split_right_tab
             
-            # Lewa karta: panel na lewym skraju, Prawa karta: panel na prawym skraju
             left_tab.set_panel_side("left", show_header=True)
             right_tab.set_panel_side("right", show_header=True)
             
@@ -2875,7 +3223,6 @@ class MainWindow(QMainWindow):
             left_tab.update_header_title()
             right_tab.update_header_title()
             
-            # Pionowa linia oddzielająca na samym środku + równe wagi stretch=1
             separator = QFrame()
             separator.setFrameShape(QFrame.Shape.VLine)
             separator.setStyleSheet("background-color: #27272a; max-width: 2px;")

@@ -17,6 +17,16 @@ Thumbs.db
 desktop.ini
 .DS_Store
 
+# Pliki tymczasowe
+*.tmp
+*.tmp.*
+
+# Tymczasowe zrzuty i katalogi generatora dokumentacji
+_nieuzywane_zrzuty/
+**/_nieuzywane_zrzuty/
+annotated_tmp/
+**/annotated_tmp/
+
 # Logi wyeksportowane z konsoli aplikacji
 *.html
 *.log
@@ -25,6 +35,10 @@ desktop.ini
 !README.md
 !GEMINI.md
 !todo_tasks.md
+!changelog.md
+!CHANGELOG.md
+!INSTRUKCJA.md
+!instruction.md
 
 # Konfiguracje edytorów kodu / IDE
 .vscode/
@@ -37,4 +51,3 @@ desktop.ini
 cfg/app_settings.json
 cfg/COM*.json
 cfg/nowa_karta.json
-!changelog.md
