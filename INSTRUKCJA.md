@@ -1,6 +1,6 @@
-# Serial Commander v1.6.0 — Dokumentacja i Instrukcja Obsługi
+# Serial Commander v1.7.0 — Dokumentacja i Instrukcja Obsługi
 
-**Serial Commander** to zaawansowany, wielowątkowy terminal diagnostyczny COM / HMI stworzony w technologii Python (`PyQt6` + `pyserial`), zaprojektowany specjalnie do debugowania systemów wbudowanych (STM32, ESP32, sieci CAN/FDCAN, RS-485 oraz protokołów binarnych i ASCII).
+**Serial Commander** to zaawansowany, wielowątkowy terminal diagnostyczny COM / HMI stworzony w technologii Python (`PyQt6`, `pyserial`, `python-can`), zaprojektowany specjalnie do debugowania systemów wbudowanych (STM32, ESP32, adaptery CANable slcan, sieci CAN, RS-485 oraz protokołów binarnych i ASCII).
 
 ---
 
@@ -130,3 +130,44 @@ Gdy masz otwartych więcej niż 2 karty (np. 3 lub 4 porty COM jednocześnie):
 * **Brak duplikatów w menu:** Rozwinięta lista wyświetla wyłącznie pozostałe otwarte karty (karta aktualnie widoczna w tym oknie jest ukryta na liście).
 * **Zamiana miejscami (`Swap ⇄`):** Wybór karty przypisanej obecnie do drugiej połowy ekranu (lub kliknięcie przycisku **`⇄ Zamień miejscami`** na górnej belce) błyskawicznie zamienia miejscami lewą i prawą kartę.
 * **Powrót do pojedynczego okna:** Kliknięcie **`🗂️ Widok zakładek (1 okno)`** przełącza interfejs z powrotem na klasyczne zakładki i automatycznie zmniejsza szerokość okna głównego do kompaktowego rozmiaru pojedynczej karty (`940 px`).
+
+---
+
+## 10. Tryb Magistrali CAN (Adapter CANable / slcan)
+
+W wersji **1.7.0** aplikacja Serial Commander zyskała natywną obsługę magistrali CAN za pośrednictwem popularnych adapterów **CANable** (lub kompatybilnych z firmware `slcan` udostępniających wirtualny port COM).
+
+### Konfiguracja i Połączenie z CAN
+1. Podłącz adapter CANable do komputera przez USB. Zostanie wykryty jako standardowy port COM (np. `COM20`).
+2. Kliknij przycisk **`Edytuj`** obok profilu konfiguracyjnego i przejdź do zakładki **`Połączenie`**.
+3. Jako **Typ połączenia** wybierz **`CAN – CANable (slcan)`**.
+4. Wybierz prędkość transmisji **Bitrate CAN** (standardowe prędkości: `10k`, `20k`, `50k`, `83.3k`, `100k`, `125k`, `250k`, `500k`, `750k`, `1M`).
+5. Opcjonalnie włącz:
+   * **`Tryb nasłuchu (Listen-only)`** — adapter nie wysyła bitów ACK ani ramek błędów (idealne do bezpiecznego monitorowania magistrali pojazdu lub maszyny bez zakłócania ruchu).
+   * **`Automatycznie przypinaj każde nowe ID do Live Watch`** — automatyczne monitorowanie wszystkich pojawiających się na magistrali identyfikatorów.
+6. Kliknij **`Zapisz Ustawienia`**. Pasek karty automatycznie dostosuje się do trybu CAN (przełącznik prędkości zmieni się na `Bitrate:`, a kontrolki tekstowe UART zostaną ukryte).
+7. Kliknij **`Połącz`**. Przy pierwszym połączeniu profil zostanie automatycznie zapisany jako `COMxx_CAN.json`.
+
+### Nadawanie Ramek CAN (Składnia `cansend`)
+W polu wprowadzania komend u dołu lub w przyciskach szybkich akcji stosuj standardową składnię `ID#DANE`:
+* `187#01 02 03 04` — ramka standardowa (11-bit ID `0x187`, 4 bajty danych, spacje są dozwolone).
+* `187#01020304` — ta sama ramka w postaci zwartej bez spacji.
+* `18FEF100#AABB` — ramka rozszerzona (29-bit ID `0x18FEF100`, 2 bajty danych).
+* `65A#R` lub `65A#R4` — ramka zdalna RTR (z opcjonalnym kodem DLC).
+* `3D0#` — ramka z zerową długością danych (DLC = 0).
+
+### Telemetria Live Watch w Trybie CAN
+W trybie CAN panel **Live Watch** działa jak profesjonalny analizator magistrali:
+* **Sortowanie według ID:** Ramki są automatycznie uporządkowane rosnąco według CAN ID (najpierw ramki 11-bit, potem 29-bit).
+* **Pomiar czasu cyklu ($\Delta t$):** Obok licznika aktualizacji `#N` wyświetlany jest w czasie rzeczywistym czas cyklu od poprzedniej ramki o tym samym ID (np. `Δ   100 ms`).
+* **Błysk Zmian Bajtów:** Zmienione bajty w ramce podświetlają się na złoto-pomarańczowo na 750 ms, pozwalając natychmiast dostrzec zmienne telemetryczne (np. odczyty czujników, liczniki alive).
+* **Odpinanie:** Kliknięcie `✕` odepnie dany identyfikator, a sesyjny mechanizm zapamięta wybór i nie będzie go ponownie automatycznie przechwytywał.
+
+### Przyciski Szybkich Akcji i Potwierdzenia ACK w CAN
+* W edytorze przycisków (`PPM na przycisk`) wybierz format payloadu **`CAN`**.
+* Dla przycisków **`🔘 Toggle`** możesz zdefiniować potwierdzenie ACK dopasowywane do odebranej ramki CAN za pomocą wzorców z gwiazdką, np.:
+  * `TX ON`: `187#01`, `ACK ON`: `581#01*`
+  * `TX OFF`: `187#00`, `ACK OFF`: `581#00*`
+  * `ACK ON`: `581#` (dopasowanie do dowolnej ramki z ID `0x581`).
+* Przycisk **`🔁 Trigger`** działa w trybie CAN jako cykliczny generator ramki co zadany interwał w milisekundach.
+* Przycisk **`📜 Macro`** pozwala wykonać sekwencję ramek z opóźnieniami, np. `187#01; sleep(100); 187#00`.

@@ -5,16 +5,17 @@ Ten dokument opisuje architekturę, zrealizowane funkcjonalności oraz zasady, k
 ## 1. Stos technologiczny i Główne Zasady
 *   **Język i Kompatybilność:** Python 3.8 oraz nowsze (wymóg pełnej zgodności z Python 3.8+; na początku plików należy stosować `from __future__ import annotations` oraz unikać bezpośredniego subscriptingu typów wbudowanych PEP 585 bez odpowiednich importów).
 *   **GUI:** `PyQt6` (bezwzględny wymóg, nie używać PyQt5, PySide ani Tkinter).
-*   **Port Szeregowy:** `pyserial`.
+*   **Port Szeregowy i Magistrala CAN:** `pyserial` (dla UART) oraz `python-can` (dla adaptera CANable z firmware `slcan`).
 *   **Architektura Wielowątkowości (Thread Safety):**
     *   Komunikacja sprzętowa z portem szeregowym (`pyserial`) odbywa się wyłącznie w dedykowanym wątku `SerialWorker(QThread)` z wykorzystaniem bezpiecznej kolejki FIFO `queue.Queue()` dla danych wychodzących (`tx_queue`).
-    *   Wątki poboczne (`SerialWorker`, `MacroRunner`) nigdy nie modyfikują bezpośrednio obiektów GUI – komunikacja z głównym wątkiem odbywa się wyłącznie przez mechanizm sygnałów i slotów (`pyqtSignal`), aby zapobiec blokowaniu GUI (zamrażaniu okna).
+    *   Komunikacja z magistralą CAN (`python-can`, interfejs `slcan`) odbywa się wyłącznie w wątku `CanWorker(QThread)` z buforowaną emisją paczek ramek (`frames_received(list)`) do 20 ms / 500 ramek, aby zapobiec przeciążeniu pętli zdarzeń Qt.
+    *   Wątki poboczne (`SerialWorker`, `CanWorker`, `MacroRunner`) nigdy nie modyfikują bezpośrednio obiektów GUI – komunikacja z głównym wątkiem odbywa się wyłącznie przez mechanizm sygnałów i slotów (`pyqtSignal`), aby zapobiec blokowaniu GUI (zamrażaniu okna).
     *   Operacje wizualne (np. zmiana koloru, dopisywanie do konsoli) mogą być wykonywane **tylko** z poziomu głównego wątku (Main Thread).
 *   **Zwięzłość:** Generuj tylko modyfikowane fragmenty kodu, chyba że użytkownik wyraźnie poprosi o "wygenerowanie kodu w całości".
 *   **Edycja i Kodowanie Plików:** Ze względu na polskie znaki w kodzie (np. "Połącz", "Rozłącz") i specyfikę systemu Windows, bezwzględnie unikaj używania komend terminalowych PowerShell (takich jak `Get-Content` i `Set-Content`) do modyfikacji plików tekstowych. PowerShell domyślnie niszczy kodowanie UTF-8 bez BOM powodując tzw. mojibake. Używaj wyłącznie natywnego narzędzia `replace_file_content` lub w razie konieczności krótkich skryptów Python z `encoding="utf-8"`.
 *   **Changelog:** Zawsze, gdy wprowadzane są jakiekolwiek zmiany w kodzie lub projekcie, bezwzględnie dodaj nowy wpis do pliku `changelog.md`. Wpis musi zawierać numer wersji/datę (w formacie YYYY-MM-DD) oraz zwięzły opis wprowadzonych nowości, modyfikacji lub poprawek w podziale na sekcje (*Added*, *Changed*, *Fixed*).
 
-## 2. Architektura Aplikacji (Wersja 1.6.0)
+## 2. Architektura Aplikacji (Wersja 1.7.0)
 
 Aplikacja składa się z następujących głównych komponentów:
 
@@ -25,9 +26,10 @@ Aplikacja składa się z następujących głównych komponentów:
     *   **Przełączanie kart w nagłówku (`SplitCardHeader`):** Każda z dwóch widocznych kart posiada nagłówek z oznaczeniem strony (`[LEWA]` / `[PRAWA]`), wskaźnikiem stanu połączenia oraz przyciskiem menu (`self.btn_card_selector`). Kliknięcie rozwija dynamiczne menu (`populate_card_switch_menu`), które wyświetla pozostałe karty w tle, **pomijając kartę aktualnie wybraną w tym oknie**. Wybór karty z drugiego okna wykonuje zamianę miejscami (`Swap ⇄`).
     *   **Menu kontekstowe na pasku zakładek (`QTabBar`):** Kliknięcie PPM na zakładkę pozwala szybko przypisać ją jako lewą lub prawą kartę w widoku podzielonym.
 
-2.  **`SerialTab` (Wnętrze karty i ergonomia):**
-    *   Każda karta to w pełni niezależna instancja z własnym portem COM, konfiguracją i workerem.
-    *   **Odwrócony układ góra–dół:** Pasek połączenia (`Port`, `Baud`, `Połącz`, menu sprzętowe `⚙️`, `RX: ASCII/HEX`, `⚠ ZAPORA`, `🌪️ Filtry (N)`) oraz pasek narzędzi konsoli (`Wyczyść`, `Zapisz Logi`, `Marker`, `Szukaj`, `Limit`) znajdują się na samej górze. Pole wprowadzania komend (`cmd_input`) znajduje się na samym dole, bezpośrednio pod konsolą logów.
+2.  **`SerialTab` (Wnętrze karty, ergonomia i obsługa UART / CAN):**
+    *   Każda karta to w pełni niezależna instancja z własnym portem COM, konfiguracją profilu i workerem (`SerialWorker` dla UART lub `CanWorker` dla CANable slcan).
+    *   **Odwrócony układ góra–dół:** Pasek połączenia (`Port`, `Baud/Bitrate`, `Połącz`, menu sprzętowe `⚙️`, formatowanie, `⚠ ZAPORA`, `🌪️ Filtry (N)`) oraz pasek narzędzi konsoli (`Wyczyść`, `Zapisz Logi`, `Marker`, `Szukaj`, `Limit`) znajdują się na samej górze. Pole wprowadzania komend (`cmd_input`) znajduje się na samym dole, bezpośrednio pod konsolą logów.
+    *   **Dynamiczne dostosowanie interfejsu (`apply_transport_ui`):** W trybie UART wyświetla wybór `Baud:`, przełącznik RX ASCII/HEX oraz formaty TX i EOL. W trybie CAN ukrywa opcje znakowe i sterowanie liniami DTR/RTS, a wyświetla listę prędkości `Bitrate:` (`10k` do `1M`), menu `Listen-only` oraz placeholder `187#01 02 03`.
     *   **Skrajne rozmieszczenie paneli bocznych (`set_panel_side`):** 
         *   Karta po lewej stronie ma panel szybkich akcji po swojej lewej (zewnętrznej) krawędzi (`▶ Akcje` / `◀ Ukryj`).
         *   Karta po prawej stronie dynamicznie przebudowuje swój layout i umieszcza panel szybkich akcji po swojej prawej (zewnętrznej) krawędzi (`Akcje ◀` / `Ukryj ▶`).
@@ -37,18 +39,25 @@ Aplikacja składa się z następujących głównych komponentów:
 
 3.  **Moduł Telemetrii `📌 Live Watch` (`LiveWatchRowWidget`):**
     *   Dedykowany kontener nad główną konsolą służący do przypinania i odświeżania w jednym stałym wierszu powtarzalnych ramek diagnostycznych (np. statusów ADC, GPIO, ramek CAN/FDCAN).
-    *   **Token Diffing & Flash:** Algorytm oparty o `difflib.SequenceMatcher` rozbija nową linię na tokeny słowne, liczbowe i symbole, porównuje ze stanem poprzednim i podświetla zmienione wartości na złoto-pomarańczowo (`#5c3c00` / `#ffd43b`) przez `FLASH_DURATION = 0.75 s`. Wygaszanie koordynuje centralny `watch_decay_timer` (co 100 ms).
-    *   **Podwójna aktywacja:** Automatyczne przechwytywanie z mikrokontrolera po wysłaniu linii z prefiksem `@` (np. `@[IO_MGR] BTN: 0x01 | ADC: 512`), wycinające znak `@` i przypinające klucz w nawiasach `[...]`, lub ręczne przypięcie z menu PPM konsoli.
+    *   **Token Diffing & Flash:** Algorytm oparty o `difflib.SequenceMatcher` rozbija nową linię na tokeny słowne, liczbowe i symbole, porównuje ze stanem poprzednim i podświetla zmienione wartości (w CAN: zmienione bajty) na złoto-pomarańczowo (`#5c3c00` / `#ffd43b`) przez `FLASH_DURATION = 0.75 s`. Wygaszanie koordynuje centralny `watch_decay_timer` (co 100 ms).
+    *   **Czas Cyklu Ramki $\Delta t$ (CAN):** W trybie CAN każdy wiersz wyświetla etykietę `Δ ... ms` wyliczaną na podstawie odstępu czasu od poprzedniej odebranej ramki o danym ID.
+    *   **Sortowanie według CAN ID:** Automatyczne wstawianie wierszy z zachowaniem kolejności rosnącej (`insert_watch_row_sorted`), najpierw ramki 11-bit, potem 29-bit.
+    *   **Podwójna aktywacja:** Automatyczne przechwytywanie w trybie UART (prefiks `@`, np. `@[IO_MGR]...`) lub w trybie CAN (`can_watch_auto: true`), a także ręczne przypinanie z menu PPM konsoli. Posiada pamięć sesyjną `_unpinned_can_ids` chroniącą przed re-pinowaniem ramek odpiętych przez usera.
     *   **Ochrona widoku konsoli:** Przypięte ramki są domyślnie ukrywane w konsoli poniżej (opcja `watch_print_in_console` w profilu). Wysokość panelu Live Watch jest ograniczona do **maks. 70% wysokości konsoli**, po przekroczeniu której włącza się pionowy suwak `QScrollArea`. Posiada przycisk zwijania `▲ Ukryj / ▼ Pokaż` oraz `Odepnij wszystkie`.
 
-4.  **`SerialWorker` (Dziedziczy z QThread):**
-    *   Nieskończona pętla odczytująca asynchronicznie dane z bufora sprzętowego (metoda `run` oparta na `in_waiting`).
+4.  **Moduł Magistrali CAN (`can_support.py`):**
+    *   **`CanFrame`:** Lekka, niezależna struktura ramki CAN (obsługuje ID 11-bit, 29-bit, RTR, DLC, timestamp, `to_display()`, `to_match_key()`).
+    *   **`parse_can_frame(text)`:** Parser składni w stylu `cansend` (np. `187#01 02 03`, `18FEF100#AABB`, `65A#R`, `3D0#`) z walidacją `CanFrameError`.
+    *   **`CanWorker(QThread)`:** Dedykowany wątek komunikacyjny wykorzystujący `python-can` z interfejsem `slcan`. Kolejka nadawcza FIFO `tx_queue` i buforowana emisja odebranych ramek (`frames_received(list)`).
+
+5.  **`SerialWorker` (Dziedziczy z QThread):**
+    *   Nieskończona pętla odczytująca asynchronicznie dane z bufora portu COM UART (metoda `run` oparta na `in_waiting`).
     *   Bezpieczna kolejka FIFO `queue.Queue()` dla danych wychodzących (`tx_queue`).
     *   Obsługa linii sprzętowych: `set_dtr(state: bool)` oraz `set_rts(state: bool)`.
     *   Emisja sygnałów `data_received`, `connection_status`, `error_occurred`.
 
-5.  **`MacroRunner` (Dziedziczy z QThread):**
-    *   Wątek asynchroniczny do wykonywania skryptów (komendy TX oddzielone `;` oraz pauzy `sleep(ms)`). Komunikuje się z panelem GUI używając sygnału `tx_signal`.
+6.  **`MacroRunner` (Dziedziczy z QThread):**
+    *   Wątek asynchroniczny do wykonywania skryptów (komendy TX oddzielone `;` oraz pauzy `sleep(ms)`). Komunikuje się z panelem GUI używając sygnału `tx_signal`. Obsługuje komendy tekstowe UART oraz ramki CAN.
 
 6.  **System Konfiguracji (JSON) i Bezpieczeństwo Danych (`cfg/`):**
     *   **Atomowy zapis:** Wszystkie operacje zapisu (`save_config`, `save_app_settings`) zapisują dane najpierw do pliku tymczasowego `.tmp`, a następnie podmieniają plik docelowy za pomocą `os.replace()`, co zapobiega uszkodzeniu plików w razie awarii zasilania lub nagłego zamknięcia.
@@ -137,6 +146,13 @@ Oparte na systemie Qt Style Sheets (QSS) dynamicznie generowanym w `get_btn_styl
     *   Katalogi tymczasowe `annotated_tmp/`, `_nieuzywane_zrzuty/` oraz pliki `*.tmp` muszą być bezwzględnie ignorowane w `.gitignore`.
 10. **Edycja i Kodowanie Plików:** Ze względu na polskie znaki w kodzie (np. "Połącz", "Rozłącz") i specyfikę systemu Windows, bezwzględnie unikaj używania komend terminalowych PowerShell (takich jak `Get-Content` i `Set-Content`) do modyfikacji plików tekstowych. PowerShell domyślnie niszczy kodowanie UTF-8 bez BOM powodując tzw. mojibake. Używaj wyłącznie natywnego narzędzia `replace_file_content` lub w razie konieczności krótkich skryptów Python z `encoding="utf-8"`.
 11. **Changelog:** Zawsze, gdy wprowadzane są jakiekolwiek zmiany w kodzie lub projekcie, bezwzględnie dodaj nowy wpis do pliku `changelog.md`. Wpis musi zawierać numer wersji i datę (w formacie YYYY-MM-DD) oraz zwięzły opis wprowadzonych nowości, modyfikacji lub poprawek w podziale na sekcje (*Added*, *Changed*, *Fixed*).
+12. **Magistrala CAN i Adapter CANable (slcan):**
+    *   Komunikacja CAN z adapterem CANable odbywa się za pośrednictwem modułu `can_support.py` i dedykowanego wątku `CanWorker(QThread)` (`python-can`, interface=`slcan`).
+    *   Składnia wysyłania ramek odpowiada standardowi `cansend`: `ID#DANE` (np. `187#01 02 03`, `18FEF100#AABB`, `65A#R` dla RTR, `3D0#` dla 0-DLC). Wszelkie ramki muszą być walidowane przez `parse_can_frame(text)`, który wyrzuca `CanFrameError` z czytelnym komunikatem błędu.
+    *   Potwierdzenia ACK w przyciskach TOGGLE w trybie CAN są normalizowane przez `normalize_can_ack_pattern()` i dopasowywane do klucza `CanFrame.to_match_key()` za pomocą `fnmatch` (np. `581#01*`, `581#`).
+    *   Aby zapobiec blokowaniu GUI przy dużym obciążeniu magistrali, `CanWorker` grupuje odbierane ramki w paczki (`frames_received(list)`) w oknie do 20 ms lub 500 ramek.
+    *   Wiersze Live Watch w trybie CAN są sortowane rosnąco według CAN ID (`can_id_sort_key`), a czas cyklu $\Delta t$ jest obliczany i wyświetlany w milisekundach obok licznika aktualizacji (`Δ ... ms`).
+    *   Ręcznie odpięte ramki CAN są rejestrowane w sesyjnym zbiorze `_unpinned_can_ids`, co chroni przed ich natychmiastowym ponownym przechwyceniem przez automat `can_watch_auto`.
 
 ## 5. Do poprawy i wdrożenia na przyszłe sesje
 *   **Refaktoryzacja gui.py:** Plik osiągnął ponad 3300 linii kodu (tzw. monolith). Należy rozważyć podzielenie go na strukturę modułową w podfolderach (np. `components/` dla kontrolek i paneli, `dialogs/` dla okien modalnych, `workers/` dla wątków pobocznych `SerialWorker` i `MacroRunner`).

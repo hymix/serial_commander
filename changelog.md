@@ -2,6 +2,36 @@
 
 Wszystkie znaczące zmiany w tym projekcie będą udokumentowane w tym pliku.
 
+## [1.7.0] - 2026-10-15
+
+### Added
+- **Moduł Obsługi Magistrali CAN (`can_support.py`):**
+  - Lekka klasa reprezentacji ramki `CanFrame` (arbitration_id, is_extended, is_remote, dlc, data, timestamp), niezależna od python-can na potrzeby testów i formatowania.
+  - Parser składni w stylu `cansend` (`parse_can_frame`) z rygorystyczną walidacją i czytelnymi komunikatami błędów (`CanFrameError`): obsługa ramek standardowych 11-bit (`187#01 02`), rozszerzonych 29-bit (`18FEF100#AABB`), zdalnych RTR (`65A#R`, `65A#R4`) oraz pustych o DLC=0 (`3D0#`).
+  - Normalizator wzorców potwierdzeń ACK dla przycisków typu TOGGLE (`normalize_can_ack_pattern`) wspierający dopasowania `fnmatch` (np. `581#01*`, `581#`, `*#AA*`).
+  - Bezpieczny wątek `CanWorker(QThread)` komunikujący się z biblioteką `python-can` (interfejs `slcan`), wyposażony w kolejkę nadawczą `tx_queue` FIFO oraz grupowanie odbieranych ramek w paczki (`frames_received(list)` do 20 ms lub 500 ramek), co całkowicie eliminuje zamrażanie pętli zdarzeń GUI przy intensywnym ruchu na magistrali.
+- **Dedykowany Tryb Telemetrii Live Watch dla CAN:**
+  - Wskaźnik czasu cyklu ramki $\Delta t$ w milisekundach (`Δ ... ms`) wyliczany w czasie rzeczywistym z różnicy timestampów kolejnych ramek o danym identyfikatorze.
+  - Automatyczne sortowanie wierszy rosnąco według CAN ID (`insert_watch_row_sorted`): najpierw ramki standardowe 11-bit (od `000` do `7FF`), a po nich ramki rozszerzone 29-bit.
+  - Błysk zmienionych bajtów w ramce na złoto-pomarańczowo (`#5c3c00` / `#ffd43b`) na 750 ms na poziomie pojedynczych bajtów hex.
+  - Automatyczne przechwytywanie identyfikatorów (`can_watch_auto: true`) z inteligentną pamięcią sesyjną (`_unpinned_can_ids`), zapobiegającą ponownemu pojawianiu się identyfikatorów ręcznie odpiętych przez użytkownika.
+- **Pełna Integracja CAN z UI i Przyciskami:**
+  - Obsługa wysyłania ramek CAN z poziomu dolnego terminala, przycisków szybkich akcji (`PUSH`, `TOGGLE`, `HOLD`, `TRIGGER` jako pętla cykliczna, `MACRO` jako sekwencja ramek z `sleep(ms)`).
+  - W edytorze przycisków dodano format `"CAN"` z podpowiedziami składni (np. `187#01 02`, ACK: `581#01*`).
+  - Nowa zakładka "Połączenie" w oknie edycji konfiguracji (`ConfigEditDialog`): wybór transportu (`Serial` vs `CAN – CANable (slcan)`), wybór prędkości Bitrate (`10k`..`1M`), przełącznik trybu nasłuchu `Listen-only` oraz automatycznego Live Watch.
+  - Automatyczne profilowanie portów CAN: pierwsze połączenie z portem w trybie CAN tworzy profil `COMxx_CAN.json`.
+  - Dynamiczne dostosowywanie paska narzędziowego karty (`apply_transport_ui`): zamiana etykiety `Baud:` na `Bitrate:`, ukrywanie opcji UART (ASCII/HEX, EOL, DTR, RTS, Reset MCU) oraz udostępnienie akcji `Listen-only` i `Wyzeruj wiersze Live Watch` w menu sprzętowym.
+  - Wyciąganie identyfikatora CAN z linii logu w menu kontekstowym PPM konsoli (`📌 Przypnij do Live Watch`).
+
+### Changed
+- Podniesiono wersję aplikacji do `1.7.0` (`APP_VERSION = "1.7.0"`).
+- Rozszerzono strukturę konfiguracji profili JSON w `get_default_config()` i `load_config()` o klucze: `transport`, `can_bitrate`, `can_listen_only`, `can_watch_auto` z pełną kompatybilnością wsteczną dla starszych plików konfiguracyjnych.
+- Zaktualizowano tytuły kart i nagłówki Split View o oznaczenia CAN (np. `🟢 COM20 · CAN 500k`).
+
+### Fixed
+- Zabezpieczono aplikację przed blokowaniem GUI przy natłoku danych na magistrali CAN poprzez buforowanie paczek ramek w `CanWorker`.
+- Wyeliminowano problem niepożądanego ponownego przypinania ręcznie usuniętych identyfikatorów CAN w panelu Live Watch przy aktywnym `can_watch_auto`.
+
 ## [1.6.0] - 2026-10-15
 
 ### Added
