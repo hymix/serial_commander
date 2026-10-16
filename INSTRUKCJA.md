@@ -1,4 +1,4 @@
-# Serial Commander v1.7.0 — Dokumentacja i Instrukcja Obsługi
+# Serial Commander v1.8.0 — Dokumentacja i Instrukcja Obsługi
 
 **Serial Commander** to zaawansowany, wielowątkowy terminal diagnostyczny COM / HMI stworzony w technologii Python (`PyQt6`, `pyserial`, `python-can`), zaprojektowany specjalnie do debugowania systemów wbudowanych (STM32, ESP32, adaptery CANable slcan, sieci CAN, RS-485 oraz protokołów binarnych i ASCII).
 
@@ -13,7 +13,7 @@ Układ programu został zoptymalizowany pod kątem naturalnego skupienia wzroku 
    * `🟢 COM22` — port aktywny (połączony),
    * `⚪ COM20` — port w spoczynku (rozłączony).
 2. **Górny Pasek Połączenia i Narzędzi:** Zawiera konfigurację portu, prędkości, trybu odbioru (`ASCII` / `HEX`) oraz narzędzia konsoli (`🗑️ Wyczyść`, `💾 Zapisz Logi`, `📌 Marker`, `🔍 Szukaj`, `Limit linii`).
-3. **Lewy Panel „Szybkie Akcje (PPM)”:** Zawiera 10 programowalnych przycisków oraz wybór profilu `.json`. Panel można w każdej chwili zwinąć przyciskiem **`◀ Ukryj`**, oddając 100% szerokości dla konsoli.
+3. **Lewy Panel „Szybkie Akcje (PPM)”:** Zawiera 10 programowalnych przycisków, narzędzie zatrzymania pętli `⏹ Stop (N)` oraz wybór profilu `.json`. Panel można w każdej chwili zwinąć przyciskiem **`◀ Ukryj`**, oddając 100% szerokości dla konsoli.
 4. **Sekcja `📌 Live Watch`:** Przypięte ramki telemetryczne odświeżane w czasie rzeczywistym nad głównym strumieniem logów.
 5. **Dolny Pasek Komend (TX):** Umieszczony bezpośrednio pod najnowszymi logami. Obsługuje:
    * wysyłanie komend klawiszem `Enter`,
@@ -43,13 +43,13 @@ Obok przycisku `Połącz` / `Rozłącz` znajduje się przycisk menu sprzętowego
 
 ---
 
-## 4. Programowalne Przyciski „Szybkie Akcje” i Sprzętowy ACK
+## 4. Programowalne Przyciski „Szybkie Akcje”, Zaawansowane Tryby i Liczniki Kroczące
 
 ![Edycja przycisku Szybkich Akcji](Zrzut ekranu 2026-10-15 144053.png)
 
 > **Wskazówka:** Aby skonfigurować lub edytować dowolny z 10 przycisków po lewej stronie, **kliknij na niego Prawym Przyciskiem Myszy (PPM)**. Po najechaniu kursorem na skonfigurowany przycisk wyświetli się dymek (Tooltip) z podglądem przypisanych ramek.
 
-Każdy przycisk może pracować w jednym z **5 trybów** (w formacie `ASCII`, `HEX` lub `CAN`):
+Każdy przycisk może pracować w jednym z **7 trybów** (w formacie `ASCII`, `HEX` lub `CAN`):
 1. **`⚡ Push` (Niebieski):** Pojedyncze kliknięcie wysyła zdefiniowaną ramkę `TX` jeden raz.
 2. **`🔘 Toggle` (Zielony ON / Czerwony OFF):** Przełącznik dwustanowy z **weryfikacją sprzętową ACK**. Kliknięcie wysyła ramkę `TX ON` lub `TX OFF`, ale **kolor i stan przycisku na panelu zmieni się TYLKO wtedy, gdy urządzenie odeśle zdefiniowaną ramkę potwierdzenia (`ACK ON` / `ACK OFF`)**.
 3. **`⏳ Hold` (Pomarańczowy):** Wysyła ramkę `TX (Wciśnięty)` w momencie naciśnięcia przycisku myszą oraz `TX (Puszczony)` w momencie zwolnienia przycisku.
@@ -60,6 +60,31 @@ Każdy przycisk może pracować w jednym z **5 trybów** (w formacie `ASCII`, `H
    sleep(100)
    187#00
    ```
+6. **`❓ Query` (Bursztynowy `#d97706` / Żółty `#fcc419` w oczekiwaniu):** Zapytanie diagnostyczne Request-Response z precyzyjnym pomiarem czasu odpowiedzi i timeoutem (ms):
+   * Po kliknięciu wysyła komendę `TX` i przechodzi w stan oczekiwania (przycisk zmienia barwę na jaskrawożółtą `⏳ Nazwa...`).
+   * Jeśli urządzenie odeśle odpowiedź pasującą do wzorca `Wzorzec RX` (dopasowanie `fnmatch` dla tekstu/hex lub klucza CAN `ID#...*`), przycisk natychmiast błyska na zielono i podaje zmierzony czas reakcji: **`✔ Nazwa (42ms)`**.
+   * Jeśli czas minie bez odpowiedzi, przycisk błyska na czerwono z ostrzeżeniem: **`✖ Nazwa [TIMEOUT]`**.
+7. **`🪜 Step` (Morski Cyjan `#1098ad`):** Przełącznik sekwencyjny / wielostanowy. W dedykowanej tabeli kroków definiujesz etykiety i ramki (np. Krok 1: Wyłączony, Krok 2: Tryb Eko, Krok 3: Pełna moc). Każde kliknięcie wysyła ramkę kolejnego kroku, aktualizuje etykietę przycisku (**`🪜 Nazwa: Eko`**) i zapętla się do początku.
+
+### Dynamiczne Liczniki Kroczące `{CNT}` i `{SEQ}`
+W polach nadawczych `TX` wszystkich typów przycisków (a także w pętli `Trigger` czy skryptach `Macro`) można wstawiać inteligentne tokeny liczników:
+* **`{CNT}`** lub **`{SEQ}`** — automatyczny licznik kroczący od `0` do `255`, inkrementowany przy każdej wysłanej ramce danego przycisku.
+* **`{CNT:min-max}`** — licznik dziesiętny w zadanym przedziale, np. `{CNT:1-10}` lub `{CNT:00-99}` (automatycznie zachowuje zera wiodące na podstawie długości wartości minimalnej).
+* **`{CNT:00-FF:X}`** — pełny 1-bajtowy licznik szesnastkowy HEX (`00` do `FF`, dokładnie 2 cyfry hex).
+* **`{CNT:00-0F:X}`** (lub `{CNT:0-15:2X}`) — 1-bajtowy licznik HEX o zakresie 0..15 (`00` do `0F`, dokładnie 2 cyfry hex).
+* **`0{CNT:0-15:X}`** — 4-bitowy półbajt (`0` do `F`) dopełniony zerem wiodącym do wymaganych 2 cyfr hex.
+
+> [!IMPORTANT]
+> **Zasada parzystości cyfr HEX w CAN:** W magistrali CAN każdy bajt danych składa się ściśle z **2 cyfr szesnastkowych** (np. `00`, `0F`, `7A`). Wpisanie pojedynczej cyfry (np. samego 4-bitowego `{CNT:0-15:X}` dającego 1 znak) bez dopełnienia spowoduje nieparzystą liczbę cyfr hex w danych (błąd `nieparzysta liczba cyfr hex w danych`). Dla pełnego bajtu o zakresie 0..15 zawsze stosuj **`{CNT:00-0F:X}`** lub dwubajtowy **`{CNT:00-FF:X}`**!
+
+### Intuicyjny Pomocnik Liczników i Walidator na Żywo
+W oknie edycji przycisku (`ButtonEditDialog`):
+* **Pasek szybkiego wstawiania (Chips):** Przyciski `+ 1B HEX {CNT:00-FF:X}`, `+ 1B 0..15 {CNT:00-0F:X}`, `+ Półbajt 0{CNT:0-15:X}`, `+ Dec {CNT}` jednym kliknięciem wstawiają poprawny, sprawdzony znacznik bezpośrednio do bieżącego pola TX.
+* **Podgląd na żywo (Live Preview):** U dołu okna edycji wyświetla się na bieżąco rozwinięta ramka z symulacją sekwencji kolejnych wartości (`187#01000000 ➔ 187#01010000 ➔ ...`).
+* **Walidacja w locie i Przycisk Napraw:** Jeśli popełnisz błąd (np. nieparzysta liczba cyfr w ramce `187#01{CNT:0-15:X}0000`), walidator natychmiast wyświetla czerwone ostrzeżenie oraz przycisk **`⚡ Napraw: zamień na {CNT:00-0F:X}`**, który jednym kliknięciem koryguje ramkę do w pełni poprawnej postaci.
+
+### Narzędzie „⏹ Stop (N)” (Zatrzymanie Wszystkich Pętli)
+Gdy uruchomisz jeden lub więcej przycisków cyklicznych **`🔁 Trigger`**, w nagłówku panelu „Szybkie Akcje” automatycznie pojawia się czerwony przycisk **`⏹ Stop (N)`** (gdzie `N` to liczba aktualnie pracujących pętli). Kliknięcie go jednym ruchem natychmiast zatrzymuje wszystkie aktywne generatory, po czym przycisk samoczynnie znika.
 
 > **Inteligentne przykłady (Click-to-Clear):** Podczas konfiguracji nowego przycisku pola są automatycznie uzupełniane przykładową ramką. Wystarczy kliknąć myszą w pole, a przykład natychmiast zniknie, umożliwiając bezpośrednie wpisanie własnych danych bez konieczności zaznaczania i kasowania tekstu.
 
@@ -180,4 +205,7 @@ W trybie CAN panel **Live Watch** działa jak profesjonalny analizator magistral
   * `TX ON`: `187#01`, `ACK ON`: `581#01*`
   * `TX OFF`: `187#00`, `ACK OFF`: `581#00*`
   * `ACK ON`: `581#` (dopasowanie do dowolnej ramki z ID `0x581`).
-* Przycisk **`🔁 Trigger`** działa w trybie CAN jako cykliczny generator ramki co zadany interwał w milisekundach.
+* Przycisk **`❓ Query`** w CAN umożliwia diagnostykę Request-Response (np. OBD2/UDS): wysyła ramkę zapytania `7DF#02 01 0D 00 00 00 00 00` i oczekuje na ramkę odpowiedzi pasującą do `7E8#*`, mierząc czas reakcji sterownika w milisekundach.
+* Przycisk **`🪜 Step`** pozwala sekwencyjnie zmieniać parametry pracy urządzenia po magistrali CAN (np. Krok 1: `187#00`, Krok 2: `187#01`, Krok 3: `187#02`).
+* **Liczniki sekwencji i Alive w CAN:** W polach `TX` ramek CAN możesz stosować tokeny `{CNT:0-15:X}` (4-bitowy licznik 0..F) lub `{CNT:00-FF:X}` (8-bitowy licznik 00..FF), np. `187#01 {CNT:0-15:X} 00`, co zapewnia automatyczną inkrementację licznika żywotności przy każdym nadaniu ramki.
+* Przycisk **`🔁 Trigger`** działa w trybie CAN jako cykliczny generator ramki co zadany interwał w milisekundach (z możliwością zatrzymania wszystkich pętli przyciskiem `⏹ Stop (N)`).

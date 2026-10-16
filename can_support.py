@@ -162,7 +162,7 @@ def parse_can_frame(text: str) -> CanFrame:
     if compact and not _HEX_RE.match(compact):
         raise CanFrameError(f"dane '{data_part}' zawierają znaki spoza hex")
     if len(compact) % 2 != 0:
-        raise CanFrameError(f"nieparzysta liczba cyfr hex w danych ('{compact}')")
+        raise CanFrameError(f"nieparzysta liczba cyfr hex w danych ('{compact}', długość: {len(compact)}). Każdy bajt w CAN to 2 cyfry hex (np. '{compact}0' lub '0{compact}'). Jeśli używasz licznika, użyj pełnego bajtu {{CNT:00-0F:X}} / {{CNT:00-FF:X}} lub dopełnij półbajt: 0{{CNT:0-15:X}}")
     data = bytes.fromhex(compact) if compact else b""
     if len(data) > MAX_CLASSIC_DLC:
         raise CanFrameError(f"za dużo danych: {len(data)} B (klasyczny CAN: maks. 8 bajtów)")

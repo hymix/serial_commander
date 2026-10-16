@@ -2,6 +2,49 @@
 
 Wszystkie znaczące zmiany w tym projekcie będą udokumentowane w tym pliku.
 
+## [1.8.0] - 2026-10-16
+
+### Added
+- **Typ przycisku `❓ Query` (Request-Response z precyzyjnym pomiarem czasu reakcji i timeoutem):**
+  - Obsługiwany zarówno w trybie UART (tekst ASCII / HEX), jak i CAN (adapter CANable slcan).
+  - Po kliknięciu wysyła komendę TX i przechodzi w stan oczekiwania (jaskrawożółte podświetlenie `#fcc419` z ciemnym tekstem `⏳ Nazwa...`).
+  - Oczekuje na nadejście odpowiedzi dopasowanej do wzorca `rx_pattern` (`fnmatch` dla tekstu UART, binarnego HEX lub klucza CAN `ID#...*`) w zadanym oknie czasowym `timeout_ms`.
+  - Po nadejściu poprawnej odpowiedzi błyska na zielono `#37b24d` wyświetlając precyzyjny czas reakcji urządzenia: `✔ Nazwa (XXms)`.
+  - W przypadku upływu limitu czasu bez odpowiedzi błyska na czerwono `#f03e3e`: `✖ Nazwa [TIMEOUT]`.
+- **Typ przycisku `🪜 Step` (Przełącznik wielostanowy / Maszyna stanów):**
+  - Pozwala zdefiniować uporządkowaną listę kroków (etykieta + ramka TX) w dedykowanej tabeli edytora z możliwością dodawania, usuwania i zmiany kolejności (Góra / Dół).
+  - Każde kliknięcie wysyła kolejną ramkę z sekwencji, aktualizuje etykietę na `🪜 Nazwa: Krok` oraz dymek tooltip, zapętlając się w kółko (modulo N).
+  - Działa w profilach UART (ASCII/HEX) oraz CAN (sekwencyjna zmiana trybów pracy modułów magistrali).
+- **Dynamiczne liczniki kroczące `{CNT}` i `{SEQ}` w ramkach TX:**
+  - Funkcja `evaluate_dynamic_tokens()` automatycznie podmienia znaczniki liczników w danych wychodzących przed ich transmisją:
+    - `{CNT}` lub `{SEQ}`: licznik kroczący w zakresie `0..255`,
+    - `{CNT:min-max}`: licznik dziesiętny w zadanym zakresie (np. `{CNT:00-99}` z zachowaniem szerokości zer wiodących),
+    - `{CNT:min-max:X}`: licznik szesnastkowy HEX, np. `{CNT:0-15:X}` dla 4-bitowych liczników sekwencji CAN alive (`0..F`) oraz `{CNT:00-FF:X}` dla 8-bitowych liczników bajtowych.
+  - Każdy przycisk utrzymuje swój własny, niezależny stan licznika sekwencji.
+- **Intuicyjny Pomocnik Liczników `{CNT}` i Walidator na Żywo (`ButtonEditDialog`):**
+  - Dodano dedykowany pasek szybkich szablonów liczników (przyciski-chipy: `+ 1B HEX {CNT:00-FF:X}`, `+ 1B (0..15) {CNT:00-0F:X}`, `+ Półbajt 0{CNT:0-15:X}`, `+ Dec {CNT}`, `+ Dec {CNT:00-99}`) wstawiający gotowe znaczniki do aktywnego pola TX.
+  - Wdrożono podgląd na żywo wygenerowanej ramki (`👁 Podgląd wygenerowanej ramki:`) z symulacją sekwencji kolejnych wartości (`➔`).
+  - Zaimplementowano walidator składni w locie (`textChanged`) ostrzegający przed nieparzystą liczbą cyfr hex w CAN (np. gdy użyto jednocytrowego tokenu `{CNT:0-15:X}`).
+  - Wprowadzono inteligentny przycisk automatycznej naprawy (`⚡ Napraw automatycznie: zamień na {CNT:00-0F:X}`), który jednym ruchem koryguje składnię ramki na pełny 2-cyfrowy bajt.
+  - Dodano obsługę jawnego parametru szerokości w formacie tokenów (np. `{CNT:0-15:2X}`).
+  - Rozszerzono komunikat błędu `CanFrameError` w `can_support.py` o precyzyjną podpowiedź dotyczącą 2 cyfr hex na bajt.
+- **Narzędzie szybkiego zatrzymania pętli `⏹ Stop (N)`:**
+  - W nagłówku panelu „Szybkie Akcje” zaimplementowano przycisk `btn_stop_triggers`, który pojawia się automatycznie tylko wtedy, gdy co najmniej jeden przycisk typu `🔁 Trigger` aktywnie nadaje ramki w pętli.
+  - Wyświetla liczbę pracujących timerów `⏹ Stop (N)` i jednoetapowo zatrzymuje wszystkie aktywne pętle.
+- **Aktualizacja dokumentacji i materiałów szkoleniowych (`build_docs/`):**
+  - Dodano Slajd 13 do generatora prezentacji `build_docs/build_docs.py` z kandydatami grafik `zrzut_advanced_buttons.png` oraz szczegółowym opisem wymaganego zrzutu ekranu.
+  - Zaktualizowano listę wymaganych zrzutów `REQUIRED_SCREENSHOTS` w `build_docs/cleanup_screenshots.py`.
+  - Zaktualizowano podręcznik [`INSTRUKCJA.md`](INSTRUKCJA.md) (Sekcja 4 i 10) z opisem i przykładami użycia nowych typów przycisków oraz tokenów liczników.
+
+### Changed
+- Podniesiono wersję aplikacji do `1.8.0` (`APP_VERSION`).
+- Zaktualizowano paletę stylów QSS `get_btn_style()` o nowe warianty kolorystyczne: morski cyjan (`#1098ad` dla Step), bursztynowy (`#d97706` dla Query w spoczynku) oraz żółty z ciemnym tekstem (`#fcc419` dla Query w oczekiwaniu na odpowiedź).
+
+### Fixed
+- **Precyzyjna kalibracja znaczników w generatorze dokumentacji (`build_docs/build_docs.py`):**
+  - Skalibrowano współrzędne i powiązania punktów `[1]`–`[4]` ze zrzutami ekranu na Slajdach 9 (Split View), 11 (Eksport logów i panele akcji), 12 (Tryb magistrali CAN) oraz 13 (Zaawansowane przyciski, licznik `{CNT}` i przycisk Stop pętli).
+  - Wyeliminowano rozbieżności między numeracją znaczników na grafice a opisami w punktach (bullets).
+
 ## [1.7.2] - 2026-10-16
 
 ### Added

@@ -30,7 +30,7 @@ from can_support import (CAN_AVAILABLE, CAN_IMPORT_ERROR, CAN_BITRATES, DEFAULT_
 
 CFG_DIR = "cfg"
 APP_SETTINGS_FILE = os.path.join(CFG_DIR, "app_settings.json")
-APP_VERSION = "1.7.2"
+APP_VERSION = "1.8.0"
 
 # ==========================================
 # GLOBALNY MOTYW CIEMNY (QSS)
@@ -177,7 +177,11 @@ def get_default_button(btn_id):
         "tx_on": "AA 01 00 55",    
         "tx_off": "AA 00 00 55",   
         "ack_on": "AA 01 00 55",   
-        "ack_off": "AA 00 00 55"   
+        "ack_off": "AA 00 00 55",
+        "rx_pattern": "",
+        "timeout": 1000,
+        "steps": [],
+        "current_step": 0
     }
 
 def get_default_config():
@@ -444,8 +448,66 @@ class LiveWatchRowWidget(QFrame):
 
 
 # ==========================================
-# 2. OKNA DIALOGOWE EDYCJI
+# 2. OKNA DIALOGOWE EDYCJI I POMOCNIKI
 # ==========================================
+
+CNT_PATTERN = re.compile(r'\{(?:CNT|SEQ)(?::([0-9a-fA-F]+)-([0-9a-fA-F]+)(?::([a-zA-Z0-9]+))?)?\}')
+
+def evaluate_dynamic_tokens(text: str, counter_dict: dict, counter_scope_id) -> str:
+    """
+    Zastępuje w tekście komendy/ramki znaczniki licznika kroczącego:
+    - {CNT} lub {SEQ}: standardowy licznik kroczący (0..255)
+    - {CNT:min-max}: zakres min..max (dziesiętny, np. {CNT:0-15}, {CNT:00-99})
+    - {CNT:min-max:X} lub {CNT:min-max:HEX}: format szesnastkowy wielkimi literami (np. {CNT:0-15:X}, {CNT:00-FF:X})
+    - {CNT:min-max:x}: format szesnastkowy małymi literami
+    """
+    if not text or ("{CNT" not in text and "{SEQ" not in text):
+        return text
+
+    def replacer(match):
+        raw_min = match.group(1)
+        raw_max = match.group(2)
+        raw_fmt = match.group(3) or ""
+        fmt_upper = raw_fmt.upper()
+        is_hex = "X" in fmt_upper or "HEX" in fmt_upper or any(c in "abcdefABCDEF" for c in (raw_min or "")) or any(c in "abcdefABCDEF" for c in (raw_max or ""))
+        
+        base = 16 if (is_hex and any(c in "abcdefABCDEF" for c in (raw_min or "") + (raw_max or ""))) else 10
+        try:
+            min_val = int(raw_min, base) if raw_min else 0
+            max_val = int(raw_max, base) if raw_max else 255
+        except ValueError:
+            min_val, max_val = 0, 255
+
+        if min_val > max_val:
+            min_val, max_val = max_val, min_val
+
+        key = (counter_scope_id, match.group(0))
+        cur_val = counter_dict.get(key, min_val)
+        next_val = min_val if cur_val >= max_val else cur_val + 1
+        counter_dict[key] = next_val
+
+        w_match = re.search(r'(\d+)', raw_fmt)
+        explicit_width = int(w_match.group(1)) if w_match else 0
+
+        if is_hex:
+            if explicit_width > 0:
+                width = explicit_width
+            elif raw_min and raw_min.startswith("0") and len(raw_min) > 1:
+                width = len(raw_min)
+            elif raw_max and any(c in "abcdefABCDEF" for c in raw_max):
+                width = len(raw_max)
+            else:
+                width = len(f"{max_val:X}")
+            char = 'x' if 'x' in raw_fmt else 'X'
+            return f"{cur_val:0{width}{char}}"
+        else:
+            width = explicit_width if explicit_width > 0 else (len(raw_min) if (raw_min and raw_min.startswith("0") and len(raw_min) > 1) else 0)
+            if width > 0:
+                return f"{cur_val:0{width}d}"
+            return str(cur_val)
+
+    return CNT_PATTERN.sub(replacer, text)
+
 
 CAN_BUTTON_EXAMPLES = {
     "push_tx": "187#01 02 03 04",
@@ -457,6 +519,8 @@ CAN_BUTTON_EXAMPLES = {
     "hld_tx_off": "187#00",
     "trig_tx": "187#01 02 03 04",
     "mac_tx": "187#01 02;\nsleep(100);\n187#00",
+    "query_tx": "187#01",
+    "query_rx": "581#*",
 }
 
 CAN_BUTTON_PLACEHOLDERS = {
@@ -469,6 +533,8 @@ CAN_BUTTON_PLACEHOLDERS = {
     "hld_tx_off": "np. 187#00",
     "trig_tx": "np. 187#01 02 03 04",
     "mac_tx": "np. 187#01 02;\nsleep(100);\n187#00",
+    "query_tx": "np. 187#01",
+    "query_rx": "np. 581#* lub 581#01*",
 }
 
 
@@ -562,10 +628,13 @@ class ButtonEditDialog(QDialog):
         self.btn_data = btn_data
         self.is_can_mode = is_can_mode
         self.delete_requested = False
+        self.autofix_target = None
+        self.autofix_replacement = None
         
-        self.resize(480, 500)
+        self.resize(570, 650)
         self.main_layout = QVBoxLayout(self)
-        self.main_layout.setSpacing(8)
+        self.main_layout.setSpacing(6)
+        self.main_layout.setContentsMargins(10, 8, 10, 8)
         
         # Nowy przycisk to taki, który nie był jeszcze włączony/używany
         is_new_btn = not btn_data.get("is_used", False)
@@ -583,7 +652,7 @@ class ButtonEditDialog(QDialog):
         top_layout.addRow("", self.cb_show_marker)
         
         self.combo_type = QComboBox()
-        self.combo_type.addItems(["push", "toggle", "hold", "trigger", "macro"])
+        self.combo_type.addItems(["push", "toggle", "hold", "trigger", "macro", "query", "step"])
         self.combo_type.setCurrentText(btn_data.get("type", "push"))
         top_layout.addRow("Typ:", self.combo_type)
         
@@ -625,6 +694,78 @@ class ButtonEditDialog(QDialog):
         info_layout.addWidget(self.info_syntax)
         info_layout.addWidget(self.info_desc)
         self.main_layout.addWidget(self.info_frame)
+
+        # Pomocnik szybkiego wstawiania liczników {CNT}
+        self.token_helper_frame = QFrame()
+        self.token_helper_frame.setStyleSheet("""
+            QFrame {
+                background-color: #1a1b1e;
+                border: 1px dashed #3f3f46;
+                border-radius: 6px;
+                padding: 4px 8px;
+            }
+        """)
+        helper_layout = QVBoxLayout(self.token_helper_frame)
+        helper_layout.setContentsMargins(6, 4, 6, 4)
+        helper_layout.setSpacing(4)
+        
+        lbl_helper_title = QLabel("💡 Szybkie wstawianie licznika {CNT} (kliknij, aby wstawić do pola TX):")
+        lbl_helper_title.setStyleSheet("font-size: 11px; font-weight: bold; color: #69db7c; background: transparent; border: none;")
+        helper_layout.addWidget(lbl_helper_title)
+        
+        chips_layout = QHBoxLayout()
+        chips_layout.setSpacing(4)
+        
+        chip_style = """
+            QPushButton {
+                background-color: #27272a;
+                color: #e4e4e7;
+                font-size: 10px;
+                font-weight: 500;
+                padding: 3px 6px;
+                border: 1px solid #3f3f46;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #228be6;
+                color: white;
+                border-color: #4dabf7;
+            }
+        """
+        
+        btn_chip_1 = QPushButton("+ 1B HEX {CNT:00-FF:X}")
+        btn_chip_1.setToolTip("Wstawia 1-bajtowy licznik szesnastkowy 00..FF (dokładnie 2 cyfry hex).")
+        btn_chip_1.setStyleSheet(chip_style)
+        btn_chip_1.clicked.connect(lambda: self.insert_token("{CNT:00-FF:X}"))
+        
+        btn_chip_2 = QPushButton("+ 1B 0..15 {CNT:00-0F:X}")
+        btn_chip_2.setToolTip("Wstawia 1-bajtowy licznik szesnastkowy z zakresem 0..15 (00..0F, dokładnie 2 cyfry hex).")
+        btn_chip_2.setStyleSheet(chip_style)
+        btn_chip_2.clicked.connect(lambda: self.insert_token("{CNT:00-0F:X}"))
+
+        btn_chip_3 = QPushButton("+ Półbajt 0{CNT:0-15:X}")
+        btn_chip_3.setToolTip("Wstawia 4-bitowy licznik 0..F w parze z zerem wiodącym (00..0F), zachowując wymagane 2 cyfry hex na bajt w CAN.")
+        btn_chip_3.setStyleSheet(chip_style)
+        btn_chip_3.clicked.connect(lambda: self.insert_token("0{CNT:0-15:X}"))
+
+        btn_chip_4 = QPushButton("+ Dec {CNT}")
+        btn_chip_4.setToolTip("Wstawia standardowy licznik dziesiętny 0..255.")
+        btn_chip_4.setStyleSheet(chip_style)
+        btn_chip_4.clicked.connect(lambda: self.insert_token("{CNT}"))
+
+        btn_chip_5 = QPushButton("+ Dec {CNT:00-99}")
+        btn_chip_5.setToolTip("Wstawia dwucyfrowy licznik dziesiętny 00..99 o stałej szerokości.")
+        btn_chip_5.setStyleSheet(chip_style)
+        btn_chip_5.clicked.connect(lambda: self.insert_token("{CNT:00-99}"))
+        
+        chips_layout.addWidget(btn_chip_1)
+        chips_layout.addWidget(btn_chip_2)
+        chips_layout.addWidget(btn_chip_3)
+        chips_layout.addWidget(btn_chip_4)
+        chips_layout.addWidget(btn_chip_5)
+        chips_layout.addStretch()
+        helper_layout.addLayout(chips_layout)
+        self.main_layout.addWidget(self.token_helper_frame)
         
         self.stack = QStackedWidget()
         
@@ -703,7 +844,134 @@ class ButtonEditDialog(QDialog):
         l_macro.addWidget(lbl_macro_hint)
         self.stack.addWidget(self.page_macro)
         
+        # QUERY (Zapytanie / Request-Response z timeoutem)
+        self.page_query = QWidget()
+        l_query = QFormLayout(self.page_query)
+        query_tx_val = "" if is_new_btn else btn_data.get("tx", "")
+        query_tx_ex = CAN_BUTTON_EXAMPLES["query_tx"] if use_can_defaults else ""
+        self.le_query_tx = ClickToClearLineEdit(query_tx_val, example_text=query_tx_ex)
+
+        query_rx_val = "" if is_new_btn else btn_data.get("rx_pattern", "")
+        query_rx_ex = CAN_BUTTON_EXAMPLES["query_rx"] if use_can_defaults else ""
+        self.le_query_rx = ClickToClearLineEdit(query_rx_val, example_text=query_rx_ex)
+
+        self.spin_query_timeout = QSpinBox()
+        self.spin_query_timeout.setRange(50, 30000)
+        self.spin_query_timeout.setValue(btn_data.get("timeout", 1000))
+        self.spin_query_timeout.setSingleStep(100)
+        self.spin_query_timeout.setSuffix(" ms")
+
+        l_query.addRow("Zapytanie (TX):", self.le_query_tx)
+        l_query.addRow("Oczekiwana odp. (RX):", self.le_query_rx)
+        l_query.addRow("Limit czasu (Timeout):", self.spin_query_timeout)
+        self.stack.addWidget(self.page_query)
+
+        # STEP (Przełącznik wielostanowy / Stepper)
+        self.page_step = QWidget()
+        l_step = QVBoxLayout(self.page_step)
+        l_step.setContentsMargins(0, 0, 0, 0)
+        l_step.setSpacing(6)
+
+        lbl_step_hint = QLabel("Zdefiniuj kolejne stany / kroki (przełączane cyklicznie po kliknięciu):")
+        lbl_step_hint.setStyleSheet("color: #ced4da; font-weight: bold; font-size: 11px;")
+        l_step.addWidget(lbl_step_hint)
+
+        self.table_steps = QTableWidget()
+        self.table_steps.setColumnCount(2)
+        self.table_steps.setHorizontalHeaderLabels(["Etykieta stanu / kroku", "Komenda / Ramka TX"])
+        self.table_steps.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        self.table_steps.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.table_steps.setColumnWidth(0, 160)
+        self.table_steps.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table_steps.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        l_step.addWidget(self.table_steps)
+
+        step_btn_layout = QHBoxLayout()
+        self.btn_add_step = QPushButton("+ Dodaj krok")
+        self.btn_del_step = QPushButton("Usuń krok")
+        self.btn_step_up = QPushButton("▲ W górę")
+        self.btn_step_down = QPushButton("▼ W dół")
+        step_btn_layout.addWidget(self.btn_add_step)
+        step_btn_layout.addWidget(self.btn_del_step)
+        step_btn_layout.addWidget(self.btn_step_up)
+        step_btn_layout.addWidget(self.btn_step_down)
+        l_step.addLayout(step_btn_layout)
+        self.stack.addWidget(self.page_step)
+
+        self.btn_add_step.clicked.connect(lambda: self.on_add_step())
+        self.btn_del_step.clicked.connect(self.on_del_step)
+        self.btn_step_up.clicked.connect(self.on_step_up)
+        self.btn_step_down.clicked.connect(self.on_step_down)
+
+        # Wypełnienie kroków dla tabeli STEP
+        existing_steps = btn_data.get("steps", [])
+        if existing_steps:
+            for s in existing_steps:
+                self.on_add_step(label=s.get("label", ""), tx=s.get("tx", ""))
+        else:
+            if use_can_defaults:
+                self.on_add_step(label="Krok 1 (0%)", tx="187#00")
+                self.on_add_step(label="Krok 2 (50%)", tx="187#7F")
+                self.on_add_step(label="Krok 3 (100%)", tx="187#FF")
+            else:
+                self.on_add_step(label="Krok 1", tx="MODE 1")
+                self.on_add_step(label="Krok 2", tx="MODE 2")
+                self.on_add_step(label="Krok 3", tx="MODE 3")
+        
         self.main_layout.addWidget(self.stack)
+        
+        # Ramka podglądu wygenerowanej ramki i walidacji składni
+        self.preview_frame = QFrame()
+        self.preview_frame.setStyleSheet("""
+            QFrame {
+                background-color: #121316;
+                border: 1px solid #2e3035;
+                border-radius: 6px;
+                padding: 6px 8px;
+            }
+        """)
+        prev_layout = QVBoxLayout(self.preview_frame)
+        prev_layout.setContentsMargins(8, 6, 8, 6)
+        prev_layout.setSpacing(4)
+        
+        prev_header_layout = QHBoxLayout()
+        self.lbl_preview_title = QLabel("👁 Podgląd wygenerowanej ramki:")
+        self.lbl_preview_title.setStyleSheet("font-size: 11px; font-weight: bold; color: #a1a1aa; background: transparent; border: none;")
+        prev_header_layout.addWidget(self.lbl_preview_title)
+        
+        self.lbl_preview_val = QLabel("")
+        self.lbl_preview_val.setStyleSheet("font-family: Consolas, monospace; font-size: 11px; color: #ffd43b; background: transparent; border: none;")
+        self.lbl_preview_val.setWordWrap(True)
+        prev_header_layout.addWidget(self.lbl_preview_val, 1)
+        prev_layout.addLayout(prev_header_layout)
+        
+        status_row_layout = QHBoxLayout()
+        self.lbl_preview_status = QLabel("")
+        self.lbl_preview_status.setStyleSheet("font-size: 11px; background: transparent; border: none;")
+        self.lbl_preview_status.setWordWrap(True)
+        status_row_layout.addWidget(self.lbl_preview_status, 1)
+        
+        self.btn_autofix = QPushButton("⚡ Napraw automatycznie")
+        self.btn_autofix.setStyleSheet("""
+            QPushButton {
+                background-color: #e03131;
+                color: white;
+                font-size: 11px;
+                font-weight: bold;
+                padding: 3px 10px;
+                border-radius: 4px;
+                border: 1px solid #fa5252;
+            }
+            QPushButton:hover {
+                background-color: #f03e3e;
+            }
+        """)
+        self.btn_autofix.setVisible(False)
+        self.btn_autofix.clicked.connect(self.apply_autofix)
+        status_row_layout.addWidget(self.btn_autofix)
+        
+        prev_layout.addLayout(status_row_layout)
+        self.main_layout.addWidget(self.preview_frame)
         
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel | QDialogButtonBox.StandardButton.Discard)
         buttons.button(QDialogButtonBox.StandardButton.Discard).setText("Usuń / Wyczyść")
@@ -714,9 +982,62 @@ class ButtonEditDialog(QDialog):
         
         self.combo_type.currentTextChanged.connect(self.update_stack)
         self.combo_payload_type.currentTextChanged.connect(self.on_payload_type_changed)
+
+        # Połączenie sygnałów aktualizacji walidacji na żywo
+        self.le_push_tx.textChanged.connect(self.validate_and_preview)
+        self.le_tog_tx_on.textChanged.connect(self.validate_and_preview)
+        self.le_tog_tx_off.textChanged.connect(self.validate_and_preview)
+        self.le_hld_tx_on.textChanged.connect(self.validate_and_preview)
+        self.le_hld_tx_off.textChanged.connect(self.validate_and_preview)
+        self.le_trig_tx.textChanged.connect(self.validate_and_preview)
+        self.le_mac_tx.textChanged.connect(self.validate_and_preview)
+        self.le_query_tx.textChanged.connect(self.validate_and_preview)
+        self.table_steps.itemChanged.connect(lambda item: self.validate_and_preview())
         
         self.update_stack(self.combo_type.currentText())
         self.on_payload_type_changed(self.combo_payload_type.currentText())
+        self.validate_and_preview()
+
+    def on_add_step(self, label="", tx=""):
+        r = self.table_steps.rowCount()
+        self.table_steps.insertRow(r)
+        is_can = (self.combo_payload_type.currentText() == "CAN") or self.is_can_mode
+        default_label = label if label else f"Krok {r+1}"
+        default_tx = tx if tx else ("187#00" if is_can else "")
+        self.table_steps.setItem(r, 0, QTableWidgetItem(default_label))
+        self.table_steps.setItem(r, 1, QTableWidgetItem(default_tx))
+        self.table_steps.selectRow(r)
+
+    def on_del_step(self):
+        cur_row = self.table_steps.currentRow()
+        if cur_row >= 0:
+            self.table_steps.removeRow(cur_row)
+
+    def on_step_up(self):
+        r = self.table_steps.currentRow()
+        if r > 0:
+            item0_text = self.table_steps.item(r, 0).text() if self.table_steps.item(r, 0) else ""
+            item1_text = self.table_steps.item(r, 1).text() if self.table_steps.item(r, 1) else ""
+            prev0_text = self.table_steps.item(r - 1, 0).text() if self.table_steps.item(r - 1, 0) else ""
+            prev1_text = self.table_steps.item(r - 1, 1).text() if self.table_steps.item(r - 1, 1) else ""
+            self.table_steps.setItem(r, 0, QTableWidgetItem(prev0_text))
+            self.table_steps.setItem(r, 1, QTableWidgetItem(prev1_text))
+            self.table_steps.setItem(r - 1, 0, QTableWidgetItem(item0_text))
+            self.table_steps.setItem(r - 1, 1, QTableWidgetItem(item1_text))
+            self.table_steps.selectRow(r - 1)
+
+    def on_step_down(self):
+        r = self.table_steps.currentRow()
+        if r >= 0 and r < self.table_steps.rowCount() - 1:
+            item0_text = self.table_steps.item(r, 0).text() if self.table_steps.item(r, 0) else ""
+            item1_text = self.table_steps.item(r, 1).text() if self.table_steps.item(r, 1) else ""
+            next0_text = self.table_steps.item(r + 1, 0).text() if self.table_steps.item(r + 1, 0) else ""
+            next1_text = self.table_steps.item(r + 1, 1).text() if self.table_steps.item(r + 1, 1) else ""
+            self.table_steps.setItem(r, 0, QTableWidgetItem(next0_text))
+            self.table_steps.setItem(r, 1, QTableWidgetItem(next1_text))
+            self.table_steps.setItem(r + 1, 0, QTableWidgetItem(item0_text))
+            self.table_steps.setItem(r + 1, 1, QTableWidgetItem(item1_text))
+            self.table_steps.selectRow(r + 1)
 
     def on_payload_type_changed(self, ptype):
         if ptype == "CAN":
@@ -729,6 +1050,8 @@ class ButtonEditDialog(QDialog):
             self.le_hld_tx_off.setPlaceholderText(CAN_BUTTON_PLACEHOLDERS["hld_tx_off"])
             self.le_trig_tx.setPlaceholderText(CAN_BUTTON_PLACEHOLDERS["trig_tx"])
             self.le_mac_tx.setPlaceholderText(CAN_BUTTON_PLACEHOLDERS["mac_tx"])
+            self.le_query_tx.setPlaceholderText(CAN_BUTTON_PLACEHOLDERS["query_tx"])
+            self.le_query_rx.setPlaceholderText(CAN_BUTTON_PLACEHOLDERS["query_rx"])
             
             # Wypełnienie pól przykładami CAN, jeśli są puste lub są aktywnymi przykładami
             fields = [
@@ -740,6 +1063,8 @@ class ButtonEditDialog(QDialog):
                 (self.le_hld_tx_on, CAN_BUTTON_EXAMPLES["hld_tx_on"]),
                 (self.le_hld_tx_off, CAN_BUTTON_EXAMPLES["hld_tx_off"]),
                 (self.le_trig_tx, CAN_BUTTON_EXAMPLES["trig_tx"]),
+                (self.le_query_tx, CAN_BUTTON_EXAMPLES["query_tx"]),
+                (self.le_query_rx, CAN_BUTTON_EXAMPLES["query_rx"]),
             ]
             for f, ex in fields:
                 if not f.text().strip() or f.is_example:
@@ -756,6 +1081,8 @@ class ButtonEditDialog(QDialog):
             self.le_hld_tx_off.setPlaceholderText("np. AA 00")
             self.le_trig_tx.setPlaceholderText("np. AA 01")
             self.le_mac_tx.setPlaceholderText("np. AA 01; sleep(500); AA 02")
+            self.le_query_tx.setPlaceholderText("np. 01 03 00 00 00 02")
+            self.le_query_rx.setPlaceholderText("np. 01 03*")
         else:
             self.le_push_tx.setPlaceholderText("")
             self.le_tog_tx_on.setPlaceholderText("")
@@ -766,11 +1093,13 @@ class ButtonEditDialog(QDialog):
             self.le_hld_tx_off.setPlaceholderText("")
             self.le_trig_tx.setPlaceholderText("")
             self.le_mac_tx.setPlaceholderText("np. cmd1; sleep(500); cmd2")
+            self.le_query_tx.setPlaceholderText("np. AT+STATUS?")
+            self.le_query_rx.setPlaceholderText("np. *OK* lub *READY*")
             
         self.update_stack(self.combo_type.currentText())
         
     def update_stack(self, text):
-        mapping = {"push": 0, "toggle": 1, "hold": 2, "trigger": 3, "macro": 4}
+        mapping = {"push": 0, "toggle": 1, "hold": 2, "trigger": 3, "macro": 4, "query": 5, "step": 6}
         self.stack.setCurrentIndex(mapping.get(text, 0))
         
         is_can = (self.combo_payload_type.currentText() == "CAN") or self.is_can_mode
@@ -779,7 +1108,7 @@ class ButtonEditDialog(QDialog):
             can_syntax_map = {
                 "push": (
                     "📌 Składnia CAN: ID#DANE (np. 187#01 02 03 04, 18FEF100#AABB, 65A#R)",
-                    "Wysyła pojedynczą ramkę CAN na magistralę natychmiast po kliknięciu."
+                    "Wysyła pojedynczą ramkę CAN natychmiast po kliknięciu. Liczniki: {CNT:00-FF:X} (1B) lub 0{CNT:0-15:X} (4-bit)."
                 ),
                 "toggle": (
                     "📌 Składnia CAN: ID#DANE | Wzorzec ACK: ID#DANE* (np. 581#01* lub 581#)",
@@ -791,11 +1120,19 @@ class ButtonEditDialog(QDialog):
                 ),
                 "trigger": (
                     "📌 Składnia CAN: ID#DANE (np. 187#01 02 03 04)",
-                    "Generator cykliczny: nadaje ramkę w pętli co zadany interwał (ms). Ponowne kliknięcie zatrzymuje nadawanie."
+                    "Generator cykliczny: nadaje ramkę w pętli co zadany interwał (ms). Liczniki: {CNT:00-FF:X} (1B) lub 0{CNT:0-15:X} (4-bit). Pamiętaj: dane w CAN muszą mieć parzystą liczbę cyfr HEX!"
                 ),
                 "macro": (
                     "📌 Składnia CAN: sekwencja ramek rozdzielonych ';' lub nowymi liniami, pauzy: sleep(ms)",
                     "Przykład: '187#01 02; sleep(100); 187#00'. Sekwencja wykonywana jest w osobnym wątku roboczym."
+                ),
+                "query": (
+                    "📌 Składnia CAN: Zapytanie ID#DANE | Oczekiwana odp: ID#DANE* (np. 7DF#... | 7E8#*)",
+                    "Wysyła ramkę zapytania i oczekuje na ramkę odpowiedzi w czasie Timeout. Sukces = zielony [OK], przekroczenie czasu = czerwony [TIMEOUT]."
+                ),
+                "step": (
+                    "📌 Składnia CAN: ID#DANE dla każdego kroku w tabeli poniżej",
+                    "Przełącznik wielostanowy (krokowy). Każde kliknięcie wysyła kolejny krok (cyklicznie 1..N) i aktualizuje etykietę na kafelku."
                 )
             }
             syntax, desc = can_syntax_map.get(text, ("", ""))
@@ -803,7 +1140,7 @@ class ButtonEditDialog(QDialog):
             uart_syntax_map = {
                 "push": (
                     "📌 Format: ASCII / HEX (np. AA 01 02)",
-                    "Kliknięcie wysyła podaną ramkę jeden raz."
+                    "Kliknięcie wysyła podaną ramkę jeden raz. Obsługuje licznik kroczący {CNT}."
                 ),
                 "toggle": (
                     "📌 Format: ASCII / HEX | Oczekiwane ACK: bajty lub tekst potwierdzenia",
@@ -815,17 +1152,198 @@ class ButtonEditDialog(QDialog):
                 ),
                 "trigger": (
                     "📌 Format: ASCII / HEX",
-                    "Pętla asynchroniczna wysyłająca ramkę co zadany interwał (ms)."
+                    "Pętla asynchroniczna wysyłająca ramkę co zadany interwał (ms). Obsługuje licznik {CNT}."
                 ),
                 "macro": (
                     "📌 Format: komendy rozdzielone ';' lub nowymi liniami, pauzy: sleep(ms)",
                     "Wykonuje sekwencję komend rozdzielonych średnikiem lub nową linią z opóźnieniami sleep(ms)."
+                ),
+                "query": (
+                    "📌 Format: ASCII / HEX | Oczekiwana odp: wzorzec (*OK*, 01 03* itp.)",
+                    "Wysyła zapytanie i oczekuje na odpowiedź pasującą do wzorca w zadanym czasie. Sukces = zielony [OK], brak odpowiedzi = czerwony [TIMEOUT]."
+                ),
+                "step": (
+                    "📌 Format: ASCII / HEX dla każdego kroku w tabeli poniżej",
+                    "Przełącznik wielostanowy. Każde kliknięcie wysyła kolejną wartość z listy i wyświetla aktualny stan na kafelku."
                 )
             }
             syntax, desc = uart_syntax_map.get(text, ("", ""))
             
         self.info_syntax.setText(syntax)
         self.info_desc.setText(desc)
+        self.validate_and_preview()
+
+    def get_active_tx_widget(self):
+        t = self.combo_type.currentText()
+        if t == "push":
+            return self.le_push_tx
+        elif t == "toggle":
+            if self.le_tog_tx_off.hasFocus():
+                return self.le_tog_tx_off
+            return self.le_tog_tx_on
+        elif t == "hold":
+            if self.le_hld_tx_off.hasFocus():
+                return self.le_hld_tx_off
+            return self.le_hld_tx_on
+        elif t == "trigger":
+            return self.le_trig_tx
+        elif t == "macro":
+            return self.le_mac_tx
+        elif t == "query":
+            return self.le_query_tx
+        elif t == "step":
+            return None
+        return self.le_push_tx
+
+    def insert_token(self, token: str):
+        w = self.get_active_tx_widget()
+        if isinstance(w, ClickToClearLineEdit):
+            w.clear_example()
+            w.insert(token)
+            w.setFocus()
+        elif isinstance(w, ClickToClearPlainTextEdit):
+            w.clear_example()
+            w.insertPlainText(token)
+            w.setFocus()
+        elif self.combo_type.currentText() == "step":
+            row = self.table_steps.currentRow()
+            if row < 0 and self.table_steps.rowCount() > 0:
+                row = 0
+            if row >= 0:
+                item = self.table_steps.item(row, 1)
+                if item:
+                    item.setText(item.text() + token)
+        self.validate_and_preview()
+
+    def get_current_tx_text(self):
+        w = self.get_active_tx_widget()
+        if isinstance(w, ClickToClearLineEdit):
+            if getattr(w, "is_example", False):
+                return ""
+            return w.text().strip()
+        elif isinstance(w, ClickToClearPlainTextEdit):
+            if getattr(w, "is_example", False):
+                return ""
+            lines = [l.strip() for l in w.toPlainText().splitlines() if l.strip() and not l.strip().lower().startswith("sleep")]
+            return lines[0] if lines else ""
+        elif self.combo_type.currentText() == "step":
+            row = self.table_steps.currentRow()
+            if row < 0 and self.table_steps.rowCount() > 0:
+                row = 0
+            if row >= 0:
+                item = self.table_steps.item(row, 1)
+                return item.text().strip() if item else ""
+        return ""
+
+    def validate_and_preview(self):
+        raw_text = self.get_current_tx_text()
+        self.btn_autofix.setVisible(False)
+        self.autofix_target = None
+        self.autofix_replacement = None
+
+        if not raw_text:
+            self.lbl_preview_val.setText("(brak danych TX lub aktywny przykład)")
+            self.lbl_preview_status.setText("💡 Wpisz komendę/ramkę lub kliknij przycisk pomocnika powyżej.")
+            self.lbl_preview_status.setStyleSheet("color: #868e96; font-size: 11px;")
+            return
+
+        dummy_counters = {}
+        s0 = evaluate_dynamic_tokens(raw_text, dummy_counters, "preview")
+        s1 = evaluate_dynamic_tokens(raw_text, dummy_counters, "preview")
+        s2 = evaluate_dynamic_tokens(raw_text, dummy_counters, "preview")
+
+        if "{CNT" in raw_text or "{SEQ" in raw_text:
+            self.lbl_preview_val.setText(f"{s0}  ➔  {s1}  ➔  {s2}")
+        else:
+            self.lbl_preview_val.setText(s0)
+
+        is_can = (self.combo_payload_type.currentText() == "CAN") or self.is_can_mode
+        ptype = self.combo_payload_type.currentText()
+
+        if is_can or ptype == "CAN":
+            try:
+                frame0 = parse_can_frame(s0)
+                frame1 = parse_can_frame(s1)
+                id_fmt = f"0x{frame0.arbitration_id:08X}" if frame0.is_extended else f"0x{frame0.arbitration_id:03X}"
+                ext_lbl = "29-bit" if frame0.is_extended else "11-bit"
+                if frame0.is_remote:
+                    self.lbl_preview_status.setText(f"✅ Poprawna ramka RTR: ID {id_fmt} ({ext_lbl}), DLC: {frame0.dlc}")
+                else:
+                    data_hex = frame0.data.hex(' ').upper()
+                    self.lbl_preview_status.setText(f"✅ Poprawna ramka CAN: ID {id_fmt} ({ext_lbl}), DLC: {frame0.dlc} B  |  Dane: [{data_hex}]")
+                self.lbl_preview_status.setStyleSheet("color: #69db7c; font-size: 11px; font-weight: bold;")
+            except CanFrameError as e:
+                err_msg = str(e)
+                self.lbl_preview_status.setText(f"⚠️ {err_msg}")
+                self.lbl_preview_status.setStyleSheet("color: #ff6b6b; font-size: 11px; font-weight: bold;")
+
+                # Sprawdź, czy błąd wynika z nieparzystej liczby cyfr powiązanej z {CNT...}
+                m_tok = re.search(r'\{(CNT|SEQ):([0-9a-fA-F]+)-([0-9a-fA-F]+):([a-zA-Z0-9]+)\}', raw_text)
+                if m_tok:
+                    c_name, r_min, r_max, r_fmt = m_tok.groups()
+                    if "x" in r_fmt.lower() and len(r_min) == 1 and (len(r_max) == 1 or r_max in ("15", "F", "f")):
+                        max_hex = "0F" if r_max in ("15", "F", "f") else f"{int(r_max, 16):02X}"
+                        min_hex = f"{int(r_min, 16):02X}"
+                        self.autofix_target = m_tok.group(0)
+                        self.autofix_replacement = f"{{{c_name}:{min_hex}-{max_hex}:{r_fmt}}}"
+                        self.btn_autofix.setText(f"⚡ Napraw: zamień na {self.autofix_replacement}")
+                        self.btn_autofix.setVisible(True)
+        elif ptype == "HEX":
+            compact = re.sub(r'[\s.:_\-]', '', s0)
+            if compact and not _HEX_RE.match(compact):
+                self.lbl_preview_status.setText("⚠️ Ciąg zawiera znaki spoza szesnastkowego HEX!")
+                self.lbl_preview_status.setStyleSheet("color: #ff6b6b; font-size: 11px; font-weight: bold;")
+            elif len(compact) % 2 != 0:
+                self.lbl_preview_status.setText(f"⚠️ Nieparzysta liczba cyfr HEX ({len(compact)} cyfr). W trybie HEX każdy bajt to 2 cyfry!")
+                self.lbl_preview_status.setStyleSheet("color: #ff6b6b; font-size: 11px; font-weight: bold;")
+            else:
+                byte_cnt = len(compact) // 2
+                self.lbl_preview_status.setText(f"✅ Poprawny ciąg BINARY HEX ({byte_cnt} bajtów).")
+                self.lbl_preview_status.setStyleSheet("color: #69db7c; font-size: 11px; font-weight: bold;")
+        else:
+            self.lbl_preview_status.setText("✅ Poprawna komenda tekstowa ASCII.")
+            self.lbl_preview_status.setStyleSheet("color: #69db7c; font-size: 11px; font-weight: bold;")
+
+    def apply_autofix(self):
+        if not self.autofix_target or not self.autofix_replacement:
+            return
+        w = self.get_active_tx_widget()
+        if isinstance(w, ClickToClearLineEdit):
+            w.setText(w.text().replace(self.autofix_target, self.autofix_replacement))
+        elif isinstance(w, ClickToClearPlainTextEdit):
+            w.setPlainText(w.toPlainText().replace(self.autofix_target, self.autofix_replacement))
+        elif self.combo_type.currentText() == "step":
+            row = self.table_steps.currentRow()
+            if row < 0 and self.table_steps.rowCount() > 0:
+                row = 0
+            if row >= 0:
+                item = self.table_steps.item(row, 1)
+                if item:
+                    item.setText(item.text().replace(self.autofix_target, self.autofix_replacement))
+        self.validate_and_preview()
+
+    def accept(self):
+        if self.delete_requested:
+            super().accept()
+            return
+        raw_text = self.get_current_tx_text()
+        is_can = (self.combo_payload_type.currentText() == "CAN") or self.is_can_mode
+        if raw_text and is_can:
+            dummy = {}
+            s0 = evaluate_dynamic_tokens(raw_text, dummy, "check")
+            try:
+                parse_can_frame(s0)
+            except CanFrameError as e:
+                ret = QMessageBox.warning(
+                    self, 
+                    "Ostrzeżenie o błędzie składni CAN", 
+                    f"Wprowadzona ramka zawiera błąd składni:\n\n{e}\n\nCzy na pewno chcesz zapisać mimo błędu?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No
+                )
+                if ret != QMessageBox.StandardButton.Yes:
+                    return
+        super().accept()
 
     def on_delete(self):
         self.delete_requested = True
@@ -860,6 +1378,19 @@ class ButtonEditDialog(QDialog):
             res["interval"] = self.spin_trig_int.value()
         elif t == "macro":
             res["tx"] = self.le_mac_tx.toPlainText().strip()
+        elif t == "query":
+            res["tx"] = self.le_query_tx.text().strip()
+            res["rx_pattern"] = self.le_query_rx.text().strip()
+            res["timeout"] = self.spin_query_timeout.value()
+        elif t == "step":
+            steps_data = []
+            for r in range(self.table_steps.rowCount()):
+                lbl_item = self.table_steps.item(r, 0)
+                tx_item = self.table_steps.item(r, 1)
+                lbl = lbl_item.text().strip() if lbl_item else f"Krok {r+1}"
+                tx = tx_item.text().strip() if tx_item else ""
+                steps_data.append({"label": lbl, "tx": tx})
+            res["steps"] = steps_data
             
         return res
 
@@ -1717,6 +2248,11 @@ class SerialTab(QWidget):
         for i, t in enumerate(self.button_timers):
             t.timeout.connect(lambda checked=False, idx=i: self.on_trigger_timeout(idx))
             
+        self.button_counters = {}
+        self.button_step_indices = [0] * 10
+        self.active_queries = {}
+        self.query_restore_timers = [QTimer(self) for _ in range(10)]
+
         self.gui_buttons = []
         self.macro_runners = []
         
@@ -1804,6 +2340,15 @@ class SerialTab(QWidget):
         left_header_layout.addWidget(lbl_macros)
         left_header_layout.addStretch()
         
+        self.btn_stop_triggers = QPushButton("⏹ Stop")
+        self.btn_stop_triggers.setFixedHeight(22)
+        self.btn_stop_triggers.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_stop_triggers.setToolTip("Zatrzymaj wszystkie aktywne pętle nadawania (Triggery)")
+        self.btn_stop_triggers.setStyleSheet("QPushButton { padding: 1px 6px; font-size: 11px; color: #fa5252; border: 1px solid #fa5252; font-weight: bold; } QPushButton:hover { background-color: #fa5252; color: white; }")
+        self.btn_stop_triggers.clicked.connect(self.stop_all_triggers)
+        self.btn_stop_triggers.hide()
+        left_header_layout.addWidget(self.btn_stop_triggers)
+
         self.btn_hide_left = QPushButton("◀ Ukryj")
         self.btn_hide_left.setFixedHeight(22)
         self.btn_hide_left.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -2793,6 +3338,13 @@ class SerialTab(QWidget):
             
         for t in self.button_timers:
             t.stop()
+        for t in self.query_restore_timers:
+            t.stop()
+        for q in self.active_queries.values():
+            q_timer = q.get("timer")
+            if q_timer:
+                q_timer.stop()
+        self.active_queries.clear()
         self.watch_decay_timer.stop()
             
         for runner in self.macro_runners:
@@ -3014,6 +3566,13 @@ class SerialTab(QWidget):
         if self.button_timers[idx].isActive():
             self.button_timers[idx].stop()
         self.button_states[idx] = False
+        if self.query_restore_timers[idx].isActive():
+            self.query_restore_timers[idx].stop()
+        if idx in self.active_queries:
+            q_timer = self.active_queries[idx].get("timer")
+            if q_timer:
+                q_timer.stop()
+            del self.active_queries[idx]
 
         if btn_cfg.get("is_used", False):
             b_type = btn_cfg.get("type", "toggle")
@@ -3053,6 +3612,22 @@ class SerialTab(QWidget):
                 btn.setStyleSheet(self.get_btn_style("#607d8b"))
                 btn.setToolTip(f"Typ: TRIGGER ({p_type})\nTX: {btn_cfg.get('tx')}\nInterwał: {btn_cfg.get('interval', 1000)} ms\n\n(PPM: Edytuj)")
                 btn.clicked.connect(lambda checked, i=idx: self.on_trigger_clicked(i))
+
+            elif b_type == "query":
+                btn.setText(f"❓ {name}")
+                btn.setStyleSheet(self.get_btn_style("#d97706"))
+                btn.setToolTip(f"Typ: QUERY ({p_type})\nTX: {btn_cfg.get('tx')}\nOczekiwane RX: {btn_cfg.get('rx_pattern')}\nTimeout: {btn_cfg.get('timeout', 1000)} ms\n\n(Klik: Wyślij zapytanie | PPM: Edytuj)")
+                btn.clicked.connect(lambda checked, i=idx: self.on_query_clicked(i))
+                
+            elif b_type == "step":
+                steps = btn_cfg.get("steps", [])
+                step_idx = self.button_step_indices[idx] % max(1, len(steps))
+                cur_step = steps[step_idx] if steps else {"label": "Brak kroków", "tx": ""}
+                step_label = cur_step.get("label", f"Krok {step_idx+1}")
+                btn.setText(f"🪜 {name}: {step_label}")
+                btn.setStyleSheet(self.get_btn_style("#1098ad"))
+                btn.setToolTip(f"Typ: STEP ({p_type})\nKrok: {step_idx+1}/{max(1, len(steps))} ({step_label})\nTX: {cur_step.get('tx', '')}\n\n(Klik: Wyślij i przełącz krok | PPM: Edytuj)")
+                btn.clicked.connect(lambda checked, i=idx: self.on_step_clicked(i))
         else:
             btn.setText("+ Przypisz akcję (PPM)")
             btn.setToolTip("Kliknij prawym przyciskiem myszy (PPM), aby skonfigurować ten przycisk.")
@@ -3373,10 +3948,16 @@ class SerialTab(QWidget):
         self.update_header_title()
         self.tab_state_changed.emit()
 
-    def send_payload(self, payload_str, source_name="Manual", show_marker=False, payload_type="ASCII"):
+    def resolve_dynamic_tokens(self, text: str, btn_idx: int = -1) -> str:
+        return evaluate_dynamic_tokens(text, self.button_counters, btn_idx)
+
+    def send_payload(self, payload_str, source_name="Manual", show_marker=False, payload_type="ASCII", btn_idx=-1):
         if not self.worker or not self.worker.is_running:
             self.log_info(f"Brak aktywnego połączenia. Odrzucono: {source_name}")
             return
+
+        scope_id = btn_idx if btn_idx >= 0 else source_name
+        payload_str = evaluate_dynamic_tokens(payload_str, self.button_counters, scope_id)
 
         marker_text = source_name if show_marker else ""
         is_can = self.app_config.get("transport") == TRANSPORT_SLCAN
@@ -3420,7 +4001,7 @@ class SerialTab(QWidget):
             self.cmd_input.add_to_history(text)
             is_can = self.app_config.get("transport") == TRANSPORT_SLCAN
             p_type = "CAN" if is_can else self.combo_cmd_format.currentText()
-            self.send_payload(text, source_name="Terminal", payload_type=p_type)
+            self.send_payload(text, source_name="Terminal", payload_type=p_type, btn_idx=-1)
             self.cmd_input.clear()
 
     def on_toggle_clicked(self, idx: int):
@@ -3430,28 +4011,28 @@ class SerialTab(QWidget):
         is_can = self.app_config.get("transport") == TRANSPORT_SLCAN
         default_ptype = "CAN" if is_can else "ASCII"
         p_type = btn_cfg.get("payload_type") or default_ptype
-        self.send_payload(payload, source_name=btn_cfg['name'], show_marker=btn_cfg.get("show_marker", False), payload_type=p_type)
+        self.send_payload(payload, source_name=btn_cfg['name'], show_marker=btn_cfg.get("show_marker", False), payload_type=p_type, btn_idx=idx)
 
     def on_push_clicked(self, idx: int):
         btn_cfg = self.app_config["buttons"][idx]
         is_can = self.app_config.get("transport") == TRANSPORT_SLCAN
         default_ptype = "CAN" if is_can else "ASCII"
         p_type = btn_cfg.get("payload_type") or default_ptype
-        self.send_payload(btn_cfg.get("tx", ""), source_name=btn_cfg['name'], show_marker=btn_cfg.get("show_marker", False), payload_type=p_type)
+        self.send_payload(btn_cfg.get("tx", ""), source_name=btn_cfg['name'], show_marker=btn_cfg.get("show_marker", False), payload_type=p_type, btn_idx=idx)
 
     def on_hold_pressed(self, idx: int):
         btn_cfg = self.app_config["buttons"][idx]
         is_can = self.app_config.get("transport") == TRANSPORT_SLCAN
         default_ptype = "CAN" if is_can else "ASCII"
         p_type = btn_cfg.get("payload_type") or default_ptype
-        self.send_payload(btn_cfg.get("tx_on", ""), source_name=btn_cfg['name'], show_marker=btn_cfg.get("show_marker", False), payload_type=p_type)
+        self.send_payload(btn_cfg.get("tx_on", ""), source_name=btn_cfg['name'], show_marker=btn_cfg.get("show_marker", False), payload_type=p_type, btn_idx=idx)
 
     def on_hold_released(self, idx: int):
         btn_cfg = self.app_config["buttons"][idx]
         is_can = self.app_config.get("transport") == TRANSPORT_SLCAN
         default_ptype = "CAN" if is_can else "ASCII"
         p_type = btn_cfg.get("payload_type") or default_ptype
-        self.send_payload(btn_cfg.get("tx_off", ""), source_name=btn_cfg['name'], show_marker=btn_cfg.get("show_marker", False), payload_type=p_type)
+        self.send_payload(btn_cfg.get("tx_off", ""), source_name=btn_cfg['name'], show_marker=btn_cfg.get("show_marker", False), payload_type=p_type, btn_idx=idx)
 
     def on_macro_clicked(self, idx: int):
         btn_cfg = self.app_config["buttons"][idx]
@@ -3490,12 +4071,14 @@ class SerialTab(QWidget):
             btn.setText(f"⏹ {cfg.get('name', '')} ({interval}ms)")
             self.on_trigger_timeout(idx)
             timer.start(interval)
+        self.update_stop_triggers_button()
             
     def on_trigger_timeout(self, idx):
         if not self.worker or not self.worker.is_running:
             self.button_timers[idx].stop()
             self.button_states[idx] = False
             self.setup_button(idx)
+            self.update_stop_triggers_button()
             return
             
         cfg = self.app_config["buttons"][idx]
@@ -3504,7 +4087,175 @@ class SerialTab(QWidget):
             is_can = self.app_config.get("transport") == TRANSPORT_SLCAN
             default_ptype = "CAN" if is_can else "ASCII"
             p_type = cfg.get("payload_type") or default_ptype
-            self.send_payload(tx, source_name=cfg.get('name', ''), show_marker=cfg.get("show_marker", False), payload_type=p_type)
+            self.send_payload(tx, source_name=cfg.get('name', ''), show_marker=cfg.get("show_marker", False), payload_type=p_type, btn_idx=idx)
+
+    def stop_all_triggers(self):
+        stopped_count = 0
+        for idx, timer in enumerate(self.button_timers):
+            if timer.isActive():
+                timer.stop()
+                self.button_states[idx] = False
+                stopped_count += 1
+                btn = self.gui_buttons[idx]
+                cfg = self.app_config["buttons"][idx]
+                btn.setStyleSheet(self.get_btn_style("#607d8b"))
+                btn.setText(f"🔁 {cfg.get('name', '')}")
+        self.update_stop_triggers_button()
+        if stopped_count > 0:
+            self.log_info(f"Zatrzymano wszystkie aktywne pętle Trigger ({stopped_count}).")
+
+    def update_stop_triggers_button(self):
+        active_count = sum(1 for t in self.button_timers if t.isActive())
+        if active_count > 0:
+            self.btn_stop_triggers.setText(f"⏹ Stop ({active_count})")
+            self.btn_stop_triggers.show()
+        else:
+            self.btn_stop_triggers.hide()
+
+    def on_query_clicked(self, idx: int):
+        if not self.worker or not self.worker.is_running:
+            self.log_info("Brak aktywnego połączenia z portem.")
+            return
+
+        btn_cfg = self.app_config["buttons"][idx]
+        tx_raw = btn_cfg.get("tx", "").strip()
+        rx_pattern = btn_cfg.get("rx_pattern", "").strip()
+        timeout_ms = int(btn_cfg.get("timeout", 1000))
+        is_can = self.app_config.get("transport") == TRANSPORT_SLCAN
+        default_ptype = "CAN" if is_can else "ASCII"
+        p_type = btn_cfg.get("payload_type") or default_ptype
+
+        if idx in self.active_queries:
+            old_timer = self.active_queries[idx].get("timer")
+            if old_timer:
+                old_timer.stop()
+            del self.active_queries[idx]
+        if self.query_restore_timers[idx].isActive():
+            self.query_restore_timers[idx].stop()
+
+        self.send_payload(tx_raw, source_name=btn_cfg['name'], show_marker=btn_cfg.get("show_marker", False), payload_type=p_type, btn_idx=idx)
+
+        btn = self.gui_buttons[idx]
+        btn.setText(f"⏳ {btn_cfg['name']}...")
+        btn.setStyleSheet(self.get_btn_style("#fcc419"))
+
+        timer = QTimer(self)
+        timer.setSingleShot(True)
+        timer.timeout.connect(lambda i=idx: self.on_query_timeout(i))
+        timer.start(timeout_ms)
+
+        self.active_queries[idx] = {
+            "timer": timer,
+            "rx_pattern": rx_pattern,
+            "payload_type": p_type,
+            "start_time": time.time(),
+            "timeout": timeout_ms,
+            "tx": tx_raw
+        }
+
+    def on_query_timeout(self, idx: int):
+        if idx not in self.active_queries:
+            return
+        q_data = self.active_queries.pop(idx)
+        btn_cfg = self.app_config["buttons"][idx]
+        btn = self.gui_buttons[idx]
+
+        btn.setText(f"✖ {btn_cfg['name']} [TIMEOUT]")
+        btn.setStyleSheet(self.get_btn_style("#f03e3e"))
+        self.log_info(f"-> QUERY TIMEOUT: {btn_cfg['name']} (brak odpowiedzi na '{q_data.get('tx', '')}' w {q_data.get('timeout')} ms)")
+
+        try:
+            self.query_restore_timers[idx].disconnect()
+        except TypeError:
+            pass
+        self.query_restore_timers[idx].timeout.connect(lambda i=idx: self.restore_query_button_visual(i))
+        self.query_restore_timers[idx].start(1500)
+
+    def handle_query_success(self, idx: int, match_preview: str):
+        if idx not in self.active_queries:
+            return
+        q_data = self.active_queries.pop(idx)
+        timer = q_data.get("timer")
+        if timer:
+            timer.stop()
+
+        elapsed_ms = int((time.time() - q_data["start_time"]) * 1000)
+        btn_cfg = self.app_config["buttons"][idx]
+        btn = self.gui_buttons[idx]
+
+        btn.setText(f"✔ {btn_cfg['name']} ({elapsed_ms}ms)")
+        btn.setStyleSheet(self.get_btn_style("#37b24d"))
+        self.log_info(f"-> Odpowiedź QUERY: {btn_cfg['name']} ODEBRANO w {elapsed_ms} ms [{match_preview}]")
+
+        try:
+            self.query_restore_timers[idx].disconnect()
+        except TypeError:
+            pass
+        self.query_restore_timers[idx].timeout.connect(lambda i=idx: self.restore_query_button_visual(i))
+        self.query_restore_timers[idx].start(1200)
+
+    def restore_query_button_visual(self, idx: int):
+        self.query_restore_timers[idx].stop()
+        if idx not in self.active_queries:
+            btn_cfg = self.app_config["buttons"][idx]
+            if btn_cfg.get("is_used", False) and btn_cfg.get("type") == "query":
+                btn = self.gui_buttons[idx]
+                btn.setText(f"❓ {btn_cfg['name']}")
+                btn.setStyleSheet(self.get_btn_style("#d97706"))
+
+    def on_step_clicked(self, idx: int):
+        btn_cfg = self.app_config["buttons"][idx]
+        steps = btn_cfg.get("steps", [])
+        if not steps:
+            self.log_info(f"Brak zdefiniowanych kroków dla przycisku: {btn_cfg['name']}")
+            return
+
+        cur_idx = self.button_step_indices[idx] % len(steps)
+        step = steps[cur_idx]
+        tx_raw = step.get("tx", "")
+        step_label = step.get("label", f"Krok {cur_idx+1}")
+
+        is_can = self.app_config.get("transport") == TRANSPORT_SLCAN
+        default_ptype = "CAN" if is_can else "ASCII"
+        p_type = btn_cfg.get("payload_type") or default_ptype
+
+        source_name = f"{btn_cfg['name']} [{step_label}]"
+        self.send_payload(tx_raw, source_name=source_name, show_marker=btn_cfg.get("show_marker", False), payload_type=p_type, btn_idx=idx)
+
+        # Przełączenie na kolejny krok
+        next_idx = (cur_idx + 1) % len(steps)
+        self.button_step_indices[idx] = next_idx
+        next_step = steps[next_idx]
+        next_label = next_step.get("label", f"Krok {next_idx+1}")
+
+        btn = self.gui_buttons[idx]
+        btn.setText(f"🪜 {btn_cfg['name']}: {next_label}")
+        btn.setToolTip(f"Typ: STEP ({p_type})\nKolejny krok: {next_idx+1}/{len(steps)} ({next_label})\nTX: {next_step.get('tx', '')}\n\n(Klik: Wyślij krok | PPM: Edytuj)")
+
+    def check_uart_queries(self, incoming: str, is_hex: bool = False):
+        if not self.active_queries:
+            return
+        for i in list(self.active_queries.keys()):
+            q_data = self.active_queries.get(i)
+            if not q_data:
+                continue
+            rx_pat = q_data.get("rx_pattern", "").strip()
+            if not rx_pat:
+                continue
+            p_type = q_data.get("payload_type", "ASCII")
+
+            matched = False
+            if p_type == "HEX" or is_hex:
+                clean_incoming = incoming.replace(" ", "")
+                clean_pat = rx_pat.replace(" ", "")
+                if fnmatch.fnmatch(incoming, rx_pat) or fnmatch.fnmatch(clean_incoming, clean_pat):
+                    matched = True
+            else:
+                if fnmatch.fnmatch(incoming, rx_pat) or rx_pat in incoming:
+                    matched = True
+
+            if matched:
+                self.handle_query_success(i, incoming)
 
     def get_btn_style(self, bg_hex):
         if bg_hex == "unused":
@@ -3527,19 +4278,22 @@ class SerialTab(QWidget):
             "#37b24d": "#2f9e44", "#f03e3e": "#e03131",
             "#228be6": "#1c7ed6", "#f59f00": "#f08c00",
             "#9c27b0": "#8e24aa", "#607d8b": "#546e7a",
-            "#e67700": "#d9480f"
+            "#e67700": "#d9480f", "#1098ad": "#0c8599",
+            "#d97706": "#b45309", "#fcc419": "#fab005"
         }
         presseds = {
             "#37b24d": "#2b8a3e", "#f03e3e": "#c92a2a",
             "#228be6": "#1864ab", "#f59f00": "#e67700",
             "#9c27b0": "#7b1fa2", "#607d8b": "#455a64",
-            "#e67700": "#c92a2a"
+            "#e67700": "#c92a2a", "#1098ad": "#087f5b",
+            "#d97706": "#92400e", "#fcc419": "#f59f00"
         }
         hover = hovers.get(bg_hex, bg_hex)
         pressed = presseds.get(bg_hex, bg_hex)
+        text_color = "#18181b" if bg_hex == "#fcc419" else "white"
         
         return f"""
-        QPushButton {{ background-color: {bg_hex}; color: white; font-weight: bold; font-size: 13px; border-radius: 5px; border: 1px solid rgba(0,0,0,0.3); }}
+        QPushButton {{ background-color: {bg_hex}; color: {text_color}; font-weight: bold; font-size: 13px; border-radius: 5px; border: 1px solid rgba(0,0,0,0.3); }}
         QPushButton:hover {{ background-color: {hover}; }}
         QPushButton:pressed {{ background-color: {pressed}; padding-top: 2px; padding-left: 2px; }}
         """
@@ -3555,15 +4309,19 @@ class SerialTab(QWidget):
                     clean_line = line.strip()
                     if clean_line:
                         self.log_rx(clean_line)
+                        self.check_uart_queries(clean_line, is_hex=False)
                         
                 stripped_buffer = self.text_buffer.strip()
                 if stripped_buffer in [">", ">>"]:
                     self.log_rx(stripped_buffer)
+                    self.check_uart_queries(stripped_buffer, is_hex=False)
                     self.text_buffer = ""
             except Exception as e:
                 self.log_info(f"Błąd dekodowania: {e}")
         else:
-            self.log_rx(data.hex(' ').upper())
+            hex_str = data.hex(' ').upper()
+            self.log_rx(hex_str)
+            self.check_uart_queries(hex_str, is_hex=True)
         
         for i, btn_cfg in enumerate(self.app_config["buttons"]):
             if not btn_cfg.get("is_used", False) or btn_cfg.get("type") != "toggle":
@@ -3635,6 +4393,18 @@ class SerialTab(QWidget):
                         self.log_info(f"-> ACK CAN: {btn_cfg['name']} stan OFF ({frame.to_display()})")
                         self.button_states[i] = False
                         self.update_button_visuals(i, False)
+
+            # 2b. Weryfikacja odpowiedzi dla przycisków typu QUERY (CAN)
+            for i in list(self.active_queries.keys()):
+                q_data = self.active_queries.get(i)
+                if not q_data:
+                    continue
+                rx_pat = q_data.get("rx_pattern", "").strip()
+                if not rx_pat:
+                    continue
+                can_pat = normalize_can_ack_pattern(rx_pat)
+                if fnmatch.fnmatch(match_key, can_pat):
+                    self.handle_query_success(i, frame.to_display())
 
             # 3. Obsługa panelu Live Watch
             is_watched = False

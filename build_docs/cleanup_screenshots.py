@@ -15,7 +15,7 @@ import shutil
 DELETE_PERMANENTLY = False
 BACKUP_DIR = "_nieuzywane_zrzuty"
 
-# Dokładna mapa plików wykorzystywanych w 12 slajdach (build_docs.py)
+# Dokładna mapa plików wykorzystywanych w 13 slajdach (build_docs.py)
 REQUIRED_SCREENSHOTS = {
     "Slajd 1 (Główny interfejs)": ["obraz_4.png", "Zrzut ekranu 2026-10-15 143034.png"],
     "Slajd 2 (Lista portów COM)": ["Zrzut ekranu 2026-10-15 144322.png"],
@@ -29,6 +29,7 @@ REQUIRED_SCREENSHOTS = {
     "Slajd 10 (Split View wybór karty)": ["Zrzut ekranu 2026-10-15 144530.png"],
     "Slajd 11 (Split View rozwinięte akcje)": ["Zrzut ekranu 2026-10-15 143355.png"],
     "Slajd 12 (Tryb Magistrali CAN)": ["zrzut_can_mode.png", "Zrzut ekranu CAN mode.png", "Zrzut ekranu 2026-10-16 CAN.png"],
+    "Slajd 13 (Zaawansowane Akcje: Query, Step, CNT)": ["zrzut_advanced_buttons.png", "zrzut_query_step.png"],
 }
 
 def cleanup_screenshots():
@@ -57,7 +58,7 @@ def cleanup_screenshots():
     all_pngs = [
         f for f in os.listdir(".")
         if os.path.isfile(f) and f.lower().endswith(".png")
-        and (f.startswith("Zrzut ekranu") or f.startswith("obraz"))
+        and (f.startswith("Zrzut ekranu") or f.startswith("obraz") or f.lower().startswith("zrzut"))
     ]
 
     unused_files = [f for f in all_pngs if f not in keep_files]

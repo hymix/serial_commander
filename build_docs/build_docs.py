@@ -8,12 +8,12 @@ from PyQt6.QtGui import (QImage, QPainter, QColor, QPen, QFont, QPageSize,
 from PyQt6.QtCore import Qt, QRectF, QPointF, QMarginsF
 
 # ==============================================================================
-# SKALIBROWANA KONFIGURACJA 12 SLAJDÓW (Z OBSŁUGĄ OPISÓW I ZRZUTÓW CAN)
+# SKALIBROWANA KONFIGURACJA 13 SLAJDÓW (Z OBSŁUGĄ OPISÓW I ZRZUTÓW CAN ORAZ NOWYCH AKCJI)
 # ==============================================================================
 
 SLIDES_DATA = [
     {
-        "title": "1. Serial Commander v1.7 — Architektura i Główny Interfejs",
+        "title": "1. Serial Commander v1.8 — Architektura i Główny Interfejs",
         "subtitle": "Nowoczesny terminal diagnostyczny HMI / COM stworzony do pracy z systemami Embedded",
         "image_candidates": ["obraz_4.png", "Zrzut ekranu 2026-10-15 143034.png"],
         "image_description": "Główny widok aplikacji w trybie pojedynczej karty z aktywnym połączeniem, zwiniętym panelem lewym, sekcją Live Watch i dolnym paskiem TX.",
@@ -68,7 +68,7 @@ SLIDES_DATA = [
     },
     {
         "title": "4. Panel Szybkich Akcji (PPM) i Potwierdzenia Sprzętowe ACK",
-        "subtitle": "5 typów przycisków sterujących oraz inteligentna weryfikacja wykonania rozkazu przez sprzęt",
+        "subtitle": "7 typów przycisków sterujących, potwierdzenia ACK, zapytania z timeoutem i stany krokowe",
         "image_candidates": ["Zrzut ekranu 2026-10-15 144053.png"],
         "image_description": "Okno modalne edycji przycisku szybkiej akcji z konfiguracją trybu TOGGLE, ramkami TX i potwierdzeniem ACK.",
         "annotations": [
@@ -79,7 +79,7 @@ SLIDES_DATA = [
         ],
         "bullets": [
             "[1] Konfiguracja pod Prawym Przyciskiem Myszy (PPM): Kliknij PPM na dowolny przycisk po lewej stronie, aby otworzyć jego edytor.",
-            "[2] 5 Trybów Pracy: Push, Toggle (ACK), Hold, Trigger (pętla ms) oraz Macro (powiększone wieloliniowe pole sekwencji z sleep).",
+            "[2] 7 Trybów Pracy: Push, Toggle (ACK), Hold, Trigger (pętla ms), Macro (sekwencje), Query (zapytanie z timeoutem) oraz Step (przełącznik wielostanowy).",
             "[3] Sprzętowy ACK w trybie Toggle: Kolor przycisku zmieni się na Zielony (ON) lub Czerwony (OFF) TYLKO wtedy, gdy urządzenie odeśle ramkę potwierdzenia ACK!",
             "[4] Przycisk Usuń / Wyczyść: Natychmiastowo resetuje wybrany slot do stanu nieużywanego ('+ Przypisz akcję (PPM)')."
         ]
@@ -166,9 +166,10 @@ SLIDES_DATA = [
             {"num": 4, "target": (0.85, 0.06), "badge": (0.74, 0.06), "color": "#69db7c"},
         ],
         "bullets": [
-            "[1] Sztywna symetria 50% / 50%: Obie karty mają zawsze identyczną szerokość co do piksela, niezależnie od włączonych kontrolek czy ostrzeżenia ZAPORA.",
-            "[2] & [3] Skrajne rozmieszczenie przycisków Akcji: Przyciski rozwijania paneli bocznych ('▶ Akcje' i 'Akcje ◀') lądują na zewnętrznych krawędziach okna.",
-            "[4] Automatyczne skalowanie okna: Wejście w Split View rozszerza okno do 1440 px, a kliknięcie 'Widok zakładek (1 okno)' zmniejsza je z powrotem do 940 px."
+            "[1] Sztywna symetria 50% / 50%: Obie karty mają zawsze identyczną szerokość co do piksela, niezależnie od kontrolek czy ostrzeżenia ZAPORA.",
+            "[2] Lewy panel szybkich akcji: Przycisk '▶ Akcje' umieszczony na lewym, zewnętrznym skraju karty, nie zaburzając widoku konsoli.",
+            "[3] Prawy panel szybkich akcji: Przycisk 'Akcje ◀' umieszczony symetrycznie na prawym, zewnętrznym skraju karty.",
+            "[4] Powrót do 1 okna i skalowanie: Kliknięcie 'Widok zakładek (1 okno)' przywraca klasyczne karty i zmniejsza szerokość okna do 940 px."
         ]
     },
     {
@@ -193,15 +194,16 @@ SLIDES_DATA = [
         "image_candidates": ["Zrzut ekranu 2026-10-15 143355.png"],
         "image_description": "Widok podzielony z rozwiniętymi panelami 20 przycisków na zewnętrznych krawędziach oraz centralnymi konsolami.",
         "annotations": [
-            {"num": 1, "target": (0.06, 0.17), "badge": (0.15, 0.25), "color": "#fcc419"},
-            {"num": 2, "target": (0.93, 0.17), "badge": (0.83, 0.25), "color": "#fcc419"},
+            {"num": 1, "target": (0.06, 0.25), "badge": (0.15, 0.25), "color": "#fcc419"},
+            {"num": 2, "target": (0.93, 0.25), "badge": (0.83, 0.25), "color": "#fcc419"},
             {"num": 3, "target": (0.08, 0.97), "badge": (0.08, 0.88), "color": "#69db7c"},
-            {"num": 4, "target": (0.26, 0.21), "badge": (0.26, 0.13), "color": "#4dabf7"},
+            {"num": 4, "target": (0.20, 0.13), "badge": (0.20, 0.05), "color": "#4dabf7"},
         ],
         "bullets": [
-            "[1] & [2] Rozwinięte panele na skrajach w Split View: Pełny dostęp do 20 przycisków szybkich akcji jednocześnie przy zachowaniu sąsiadujących konsol w centrum.",
-            "[3] Zarządzanie Profilami (cfg/*.json): Automatyczny, atomowy zapis konfiguracji portu, przycisków, filtrów i przypięć Live Watch dla każdego urządzenia.",
-            "[4] Eksport Logów (HTML / MD / TXT) i Markery: Zapis przebiegu sesji z metryczką diagnostyczną (Data, Wersja, Port) i pełnym zachowaniem kolorów w formacie HTML/MD."
+            "[1] Lewy panel 10 akcji: Rozwinięty przy lewej krawędzi okna z bezpośrednim dostępem do makr lewej karty.",
+            "[2] Prawy panel 10 akcji: Rozwinięty przy prawej krawędzi okna, pozostawiając obie konsole bezpośrednio obok siebie w centrum.",
+            "[3] Zarządzanie profilami (cfg/*.json): Niezależny wybór i atomowy zapis konfiguracji dla każdej z kart.",
+            "[4] Eksport Logów i Markery: Zapis przebiegu sesji (przycisk '💾 Zapisz Logi') do HTML (z kolorami), Markdown oraz TXT."
         ]
     },
     {
@@ -216,16 +218,40 @@ SLIDES_DATA = [
             "Na dole pole wprowadzania z placeholderem '187#01 02 03'."
         ),
         "annotations": [
-            {"num": 1, "target": (0.35, 0.11), "badge": (0.35, 0.04), "color": "#228be6"},
-            {"num": 2, "target": (0.28, 0.31), "badge": (0.24, 0.24), "color": "#fcc419"},
-            {"num": 3, "target": (0.43, 0.31), "badge": (0.50, 0.24), "color": "#69db7c"},
+            {"num": 1, "target": (0.47, 0.11), "badge": (0.47, 0.04), "color": "#228be6"},
+            {"num": 2, "target": (0.92, 0.25), "badge": (0.80, 0.19), "color": "#fcc419"},
+            {"num": 3, "target": (0.50, 0.25), "badge": (0.50, 0.19), "color": "#69db7c"},
             {"num": 4, "target": (0.48, 0.97), "badge": (0.48, 0.88), "color": "#4dabf7"},
         ],
         "bullets": [
-            "[1] Konfiguracja i Bitrate CAN: Wybór prędkości magistrali (10k - 1M) w profilu połączenia CANable slcan.",
-            "[2] Sortowanie CAN ID i Czas Cyklu Delta_t: Wiersze Live Watch są automatycznie sortowane rosnąco po ID, z pomiarem odstępu czasowego Delta_t.",
-            "[3] Błysk Zmienionych Bajtów: Zmienione wartości danych w ramce błyskają na złoto na 750 ms, pozwalając śledzić zmiany w locie.",
-            "[4] Przyciski CAN i Click-to-Clear: Zablokowany format TX na CAN, dynamiczne przykłady znikające po kliknięciu i powiększone pole Makro."
+            "[1] Konfiguracja i Bitrate CAN: Wybór prędkości magistrali (10k do 1M) w profilu połączenia CANable slcan.",
+            "[2] Sortowanie CAN ID i Czas Cyklu (Δt): Wiersze Live Watch są uporządkowane rosnąco po ID z precyzyjnym pomiarem czasu cyklu (np. Δ 11 ms).",
+            "[3] Błysk Zmienionych Bajtów: Zmienione wartości w ramce CAN podświetlają się na złoto przez 750 ms, ułatwiając detekcję zmian.",
+            "[4] Nadawanie Ramek CAN (cansend): Wprowadzanie ramek w składni ID#DANE (np. 187#01 02 03), ramek RTR (65A#R) oraz DLC=0 bezpośrednio z dolnego terminala."
+        ]
+    },
+    {
+        "title": "13. Zaawansowane Przyciski (Query, Step), Licznik {CNT} i Stop Pętli",
+        "subtitle": "Zapytania z timeoutem, stany krokowe, liczniki kroczące oraz natychmiastowe zatrzymanie pętli",
+        "image_candidates": ["zrzut_advanced_buttons.png", "zrzut_query_step.png"],
+        "image_description": (
+            "Zrzut ekranu przedstawiający panel szybkich akcji oraz okno ButtonEditDialog: "
+            "widoczny pasek szybkiego wstawiania liczników '💡 Pomocnik liczników {CNT}' "
+            "(przyciski '+ 1B HEX {CNT:00-FF:X}', '+ Półbajt 0{CNT:0-15:X}', '+ Dec {CNT}'), "
+            "ramka '👁 Podgląd wygenerowanej ramki' z walidatorem składni CAN, "
+            "przycisk '❓ Query' lub '🪜 Step' na panelu bocznym oraz czerwony przycisk '⏹ Stop (N)' w nagłówku."
+        ),
+        "annotations": [
+            {"num": 1, "target": (0.11, 0.30), "badge": (0.24, 0.30), "color": "#d97706"},
+            {"num": 2, "target": (0.11, 0.37), "badge": (0.24, 0.37), "color": "#1098ad"},
+            {"num": 3, "target": (0.14, 0.14), "badge": (0.26, 0.14), "color": "#fa5252"},
+            {"num": 4, "target": (0.66, 0.66), "badge": (0.78, 0.58), "color": "#228be6"},
+        ],
+        "bullets": [
+            "[1] Typ Query (Request-Response): Wysyła zapytanie i oczekuje na wzorzec w czasie Timeout. Sukces = zielony [OK] z czasem reakcji w ms, błąd = czerwony [TIMEOUT].",
+            "[2] Typ Step (Przełącznik Wielostanowy): Każde kliknięcie przełącza kolejny zdefiniowany krok (1..N) i natychmiast wysyła przypisany payload.",
+            "[3] Przycisk '⏹ Stop (N)': Pojawia się w nagłówku panelu akcji przy aktywnych pętlach Trigger i jednym kliknięciem zatrzymuje wszystkie nadające timery.",
+            "[4] Pomocnik Liczników {CNT} i Walidator Live: Szybkie wstawianie szablonów ({CNT:00-FF:X}, 0{CNT:0-15:X}), podgląd wygenerowanej ramki w czasie rzeczywistym oraz przycisk automatycznej naprawy składni CAN."
         ]
     }
 ]
