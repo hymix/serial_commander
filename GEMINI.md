@@ -66,7 +66,7 @@ Aplikacja składa się z następujących głównych komponentów:
     *   Wsparcie dla profili przypisywanych automatycznie do portów (np. `COM3.json`). Aplikacja inteligentnie podpowiada wolne porty przy tworzeniu nowych kart.
 
 7.  **Customowe Kontrolki i Dialogi:**
-    *   **`PortComboBox`:** W stanie spoczynku ma stałą szerokość `82 px` i wyświetla sam port (np. `COM20`), a po rozwinięciu (`showPopup`) rozszerza się do `320 px` z pełnym opisem ze sterownika (`COM20 — USB-SERIAL CH340`).
+    *   **`PortComboBox`:** W stanie spoczynku ma stałą szerokość `82 px` i wyświetla sam port (np. `COM20`), a po rozwinięciu (`showPopup`) rozszerza się do `340 px` z pełnym opisem ze sterownika (`COM20 — USB-SERIAL CH340`). Nowo wykryte porty po odświeżeniu są podświetlane w rozwiniętej liście na zielono (`#1b4332` / `#8ce99a`) z etykietą `✨ ... [NOWY]`, a ponowne odświeżenie bez zmian usuwa podświetlenie.
     *   **`CommandLineEdit`:** Obsługuje historię komend pod strzałkami `Góra` / `Dół` i czyści się po wysłaniu.
     *   **`SearchDialog`:** Niezależne okienko wyszukiwania w logach (`Ctrl+F`) z obsługą przeszukiwania w przód/tył i symboli wieloznacznych `*` (wildcards).
     *   **Zarządcy (Menadżery) Tablicowi:** Okna `FilterManagerDialog` i `ParserManagerDialog` oparte na `QTableWidget` z opcją włączania/wyłączania ("Aktywny") oraz twardego sortowania.

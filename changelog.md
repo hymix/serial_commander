@@ -2,6 +2,16 @@
 
 Wszystkie znaczące zmiany w tym projekcie będą udokumentowane w tym pliku.
 
+## [1.7.1] - 2026-10-16
+
+### Added
+- **Inteligentne podświetlanie nowo wykrytych portów COM (`PortComboBox`):**
+  - Wprowadzono mechanizm różnicowego skanowania portów w `refresh_ports()`, porównujący aktualnie podłączone urządzenia ze zbiorem poprzednio znanych (`_known_ports`).
+  - Nowo podłączone porty po naciśnięciu przycisku `🔄` są wyróżniane w rozwiniętym menu `PortComboBox` ciemnozielonym tłem (`#1b4332`), jasnym tekstem (`#8ce99a`) oraz znacznikiem `✨ ... [NOWY]`.
+  - W stanie spoczynku kontrolka zachowuje stałą, kompaktową szerokość 82 px (sam identyfikator portu, np. `COM5`), bez zaburzania geometrii pasków narzędziowych ani podziału Split View 50% / 50%.
+  - Kolejne kliknięcie przycisku `🔄` (gdy nie wykryto dalszych nowych urządzeń) automatycznie usuwa podświetlenie.
+  - Informacja o nazwie nowo wykrytego portu pojawia się bezpośrednio w konsoli logów (`wykryto nowy: COMxx`).
+
 ## [1.7.0] - 2026-10-15
 
 ### Added

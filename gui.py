@@ -30,7 +30,7 @@ from can_support import (CAN_AVAILABLE, CAN_IMPORT_ERROR, CAN_BITRATES, DEFAULT_
 
 CFG_DIR = "cfg"
 APP_SETTINGS_FILE = os.path.join(CFG_DIR, "app_settings.json")
-APP_VERSION = "1.7.0"
+APP_VERSION = "1.7.1"
 
 # ==========================================
 # GLOBALNY MOTYW CIEMNY (QSS)
@@ -279,13 +279,32 @@ class PortComboBox(QComboBox):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedWidth(82)
+        self.new_ports = set()
+
+    def set_new_ports(self, new_ports: set[str]):
+        self.new_ports = set(new_ports)
+        self._apply_item_styles()
+
+    def _apply_item_styles(self):
+        for i in range(self.count()):
+            dev = self.itemData(i, Qt.ItemDataRole.UserRole)
+            if dev in self.new_ports:
+                self.setItemData(i, QColor("#1b4332"), Qt.ItemDataRole.BackgroundRole)
+                self.setItemData(i, QColor("#8ce99a"), Qt.ItemDataRole.ForegroundRole)
+            else:
+                self.setItemData(i, None, Qt.ItemDataRole.BackgroundRole)
+                self.setItemData(i, None, Qt.ItemDataRole.ForegroundRole)
 
     def showPopup(self):
         for i in range(self.count()):
+            dev = self.itemData(i, Qt.ItemDataRole.UserRole)
             full_desc = self.itemData(i, Qt.ItemDataRole.UserRole + 1)
             if full_desc:
-                self.setItemText(i, full_desc)
-        self.view().setMinimumWidth(320)
+                if dev in self.new_ports:
+                    self.setItemText(i, f"✨ {full_desc}  [NOWY]")
+                else:
+                    self.setItemText(i, full_desc)
+        self.view().setMinimumWidth(340)
         super().showPopup()
 
     def hidePopup(self):
@@ -1454,6 +1473,7 @@ class SerialTab(QWidget):
         self.watch_rows = {} # key -> LiveWatchRowWidget
         self.last_can_timestamps = {} # can_id -> float (timestamp)
         self._unpinned_can_ids = set() # can_ids ręcznie odpięte w bieżącej sesji (pomijane przy can_watch_auto)
+        self._known_ports = None # Zbiór portów z poprzedniego skanowania (None = pierwszy rozruch)
         self.watch_body_visible = True
         self.watch_decay_timer = QTimer(self)
         self.watch_decay_timer.setInterval(100)
@@ -2930,6 +2950,17 @@ class SerialTab(QWidget):
         self.port_combo.blockSignals(True)
         self.port_combo.clear()
         ports = serial.tools.list_ports.comports()
+        current_devices = {p.device for p in ports}
+
+        if self._known_ports is None:
+            # Pierwszy skan przy starcie - stan bazowy (nic nie podświetlamy)
+            new_ports = set()
+            self._known_ports = current_devices
+        else:
+            # Kolejne kliknięcie odświeżenia
+            new_ports = current_devices - self._known_ports
+            self._known_ports = current_devices
+
         for p in ports:
             self.port_combo.addItem(p.device)
             idx = self.port_combo.count() - 1
@@ -2938,6 +2969,8 @@ class SerialTab(QWidget):
             self.port_combo.setItemData(idx, full_label, Qt.ItemDataRole.UserRole + 1)
             self.port_combo.setItemData(idx, f"{full_label} [{p.hwid}]", Qt.ItemDataRole.ToolTipRole)
             
+        self.port_combo.set_new_ports(new_ports)
+
         saved_port = self.app_config.get("port") if self.app_config else None
         if saved_port:
             for i in range(self.port_combo.count()):
@@ -2948,6 +2981,8 @@ class SerialTab(QWidget):
             
         if not ports:
             self.log_info("Nie znaleziono żadnych portów COM.")
+        elif new_ports:
+            self.log_info(f"Znaleziono {len(ports)} port(ów) COM (wykryto nowy: {', '.join(sorted(new_ports))}).")
         else:
             self.log_info(f"Znaleziono {len(ports)} port(ów) COM.")
         self.update_header_title()
