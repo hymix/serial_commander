@@ -4,8 +4,9 @@ Date: 2026-10-15 15:11:04
 LastEditors: Jan Lukaszewicz j.lukaszewicz@lincor.pl
 LastEditTime: 2026-10-15 15:11:11
 FilePath: \serial_commander\build_docs\cleanup_screenshots.py
-Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
 '''
+from __future__ import annotations
+
 import os
 import shutil
 
@@ -14,7 +15,7 @@ import shutil
 DELETE_PERMANENTLY = False
 BACKUP_DIR = "_nieuzywane_zrzuty"
 
-# Dokładna mapa 10 plików wykorzystywanych w 11 slajdach (build_docs.py)
+# Dokładna mapa plików wykorzystywanych w 12 slajdach (build_docs.py)
 REQUIRED_SCREENSHOTS = {
     "Slajd 1 (Główny interfejs)": ["obraz_4.png", "Zrzut ekranu 2026-10-15 143034.png"],
     "Slajd 2 (Lista portów COM)": ["Zrzut ekranu 2026-10-15 144322.png"],
@@ -27,9 +28,14 @@ REQUIRED_SCREENSHOTS = {
     "Slajd 9 (Split View 50/50 zwinięty)": ["Zrzut ekranu 2026-10-15 143340.png", "Zrzut ekranu 2026-10-15 144514.png"],
     "Slajd 10 (Split View wybór karty)": ["Zrzut ekranu 2026-10-15 144530.png"],
     "Slajd 11 (Split View rozwinięte akcje)": ["Zrzut ekranu 2026-10-15 143355.png"],
+    "Slajd 12 (Tryb Magistrali CAN)": ["zrzut_can_mode.png", "Zrzut ekranu CAN mode.png", "Zrzut ekranu 2026-10-16 CAN.png"],
 }
 
 def cleanup_screenshots():
+    # Zapewnij, że pracujemy w katalogu skryptu (build_docs)
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    os.chdir(script_dir)
+
     keep_files = set()
     missing_slides = []
 

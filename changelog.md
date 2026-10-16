@@ -11,6 +11,20 @@ Wszystkie znaczące zmiany w tym projekcie będą udokumentowane w tym pliku.
   - W stanie spoczynku kontrolka zachowuje stałą, kompaktową szerokość 82 px (sam identyfikator portu, np. `COM5`), bez zaburzania geometrii pasków narzędziowych ani podziału Split View 50% / 50%.
   - Kolejne kliknięcie przycisku `🔄` (gdy nie wykryto dalszych nowych urządzeń) automatycznie usuwa podświetlenie.
   - Informacja o nazwie nowo wykrytego portu pojawia się bezpośrednio w konsoli logów (`wykryto nowy: COMxx`).
+- **Automatyzacja i Walidacja Generatora Dokumentacji (`build_docs/`):**
+  - Rozszerzono strukturę slajdów `SLIDES_DATA` w `build_docs/build_docs.py` do 12 slajdów, dodając Slajd 12 dla Trybu Magistrali CAN (`zrzut_can_mode.png`).
+  - Wprowadzono pole `image_description` do wszystkich slajdów w `SLIDES_DATA`, precyzujące wymaganą zawartość zrzutów ekranu dla poszczególnych funkcjonalności.
+  - Zaimplementowano funkcję `check_and_report_missing_images()`, która weryfikuje obecność grafik na dysku i w razie ich braku wypisuje w terminalu szczegółowy monit z instrukcją co zrzut ma przedstawiać.
+  - Wdrożono w `generate_pdf()` i `generate_pptx()` estetyczne ramki zastępcze (placeholdery) informujące o oczekiwaniu na grafikę wraz z formatowanymi wytycznymi.
+  - Zaktualizowano mapę `REQUIRED_SCREENSHOTS` w `build_docs/cleanup_screenshots.py` o Slajd 12.
+- **Aktualizacja Podręcznika Użytkownika (`INSTRUKCJA.md`):**
+  - Zaktualizowano Sekcję 2 o opis podświetlania nowo podłączonych portów COM (`✨ ... [NOWY]`).
+  - Powiązano Sekcję 10 (Tryb Magistrali CAN) ze zrzutem ekranu `zrzut_can_mode.png`.
+
+### Changed
+- **Aktualizacja Zasad Rozwoju Projektu (`GEMINI.md`):**
+  - Wprowadzono do Sekcji 1 i 4 bezwzględny wymóg aktualizowania `INSTRUKCJA.md` oraz `build_docs/build_docs.py` po każdej implementacji nowej funkcji.
+  - Nałożono na AI obowiązek każdorazowego proszenia użytkownika o brakujący zrzut ekranu wraz ze szczegółowym opisem jego wymaganej zawartości.
 
 ## [1.7.0] - 2026-10-15
 

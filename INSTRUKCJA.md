@@ -26,8 +26,8 @@ Układ programu został zoptymalizowany pod kątem naturalnego skupienia wzroku 
 
 ![Rozwinięta lista portów COM](Zrzut ekranu 2026-10-15 144322.png)
 
-* **Inteligentny `PortComboBox`:** W stanie spoczynku lista wyboru portu jest wąska (`82 px`) i pokazuje wyłącznie sam numer portu (np. `COM20`), oszczędzając miejsce na pasku narzędziowym. Po kliknięciu lista automatycznie rozszerza się do `320 px` i wyświetla pełną nazwę sterownika z systemu (np. `STMicroelectronics Virtual COM Port`, `USB-Enhanced-SERIAL CH343`).
-* **Przycisk `🔄`:** Odświeża listę dostępnych w systemie portów COM w locie.
+* **Inteligentny `PortComboBox`:** W stanie spoczynku lista wyboru portu jest wąska (`82 px`) i pokazuje wyłącznie sam numer portu (np. `COM20`), oszczędzając miejsce na pasku narzędziowym. Po kliknięciu lista automatycznie rozszerza się do `340 px` i wyświetla pełną nazwę sterownika z systemu (np. `STMicroelectronics Virtual COM Port`, `USB-Enhanced-SERIAL CH343`).
+* **Przycisk `🔄` i wykrywanie nowych portów:** Odświeża listę dostępnych w systemie portów COM w locie. Nowo podłączone urządzenia (np. wpięty konwerter USB-UART lub adapter CANable) są po rozwinięciu listy wyróżniane ciemnozielonym tłem, jasnym tekstem oraz etykietą **`✨ COMxx — Opis... [NOWY]`**. Ponowne kliknięcie `🔄` (gdy nie ma dalszych nowych portów) automatycznie usuwa podświetlenie.
 * **Prędkość Baudrate:** Zawiera szereg standardowych prędkości aż do **`1000000` bps**. Na samym dole listy znajduje się opcja **`Własny...`**, która pozwala wpisać dowolną niestandardową prędkość transmisji.
 
 ---
@@ -134,6 +134,8 @@ Gdy masz otwartych więcej niż 2 karty (np. 3 lub 4 porty COM jednocześnie):
 ---
 
 ## 10. Tryb Magistrali CAN (Adapter CANable / slcan)
+
+![Tryb Magistrali CAN i telemetria Live Watch](zrzut_can_mode.png)
 
 W wersji **1.7.0** aplikacja Serial Commander zyskała natywną obsługę magistrali CAN za pośrednictwem popularnych adapterów **CANable** (lub kompatybilnych z firmware `slcan` udostępniających wirtualny port COM).
 

@@ -14,6 +14,11 @@ Ten dokument opisuje architekturę, zrealizowane funkcjonalności oraz zasady, k
 *   **Zwięzłość:** Generuj tylko modyfikowane fragmenty kodu, chyba że użytkownik wyraźnie poprosi o "wygenerowanie kodu w całości".
 *   **Edycja i Kodowanie Plików:** Ze względu na polskie znaki w kodzie (np. "Połącz", "Rozłącz") i specyfikę systemu Windows, bezwzględnie unikaj używania komend terminalowych PowerShell (takich jak `Get-Content` i `Set-Content`) do modyfikacji plików tekstowych. PowerShell domyślnie niszczy kodowanie UTF-8 bez BOM powodując tzw. mojibake. Używaj wyłącznie natywnego narzędzia `replace_file_content` lub w razie konieczności krótkich skryptów Python z `encoding="utf-8"`.
 *   **Changelog:** Zawsze, gdy wprowadzane są jakiekolwiek zmiany w kodzie lub projekcie, bezwzględnie dodaj nowy wpis do pliku `changelog.md`. Wpis musi zawierać numer wersji/datę (w formacie YYYY-MM-DD) oraz zwięzły opis wprowadzonych nowości, modyfikacji lub poprawek w podziale na sekcje (*Added*, *Changed*, *Fixed*).
+*   **Aktualizacja Dokumentacji i Generatora Prezentacji (`INSTRUKCJA.md`, `build_docs/`):**
+    *   Za każdym razem, gdy dodawana jest nowa funkcjonalność lub modyfikacja UI/UX, bezwzględnie należy:
+        1. Zaktualizować plik `INSTRUKCJA.md`, szczegółowo opisując nowe opcje, zachowanie interfejsu i przykłady użycia.
+        2. Zaktualizować skrypt `build_docs/build_docs.py` (dodać slajd do `SLIDES_DATA` z polami `title`, `subtitle`, `image_candidates`, `image_description`, `annotations`, `bullets`) oraz `build_docs/cleanup_screenshots.py`.
+        3. **Obsługa brakujących zrzutów ekranu:** Jeśli do nowej funkcjonalności nie został jeszcze dostarczony zrzut ekranu (plik graficzny), generator `build_docs.py` generuje estetyczny placeholder ostrzegawczy z wytycznymi, a w konsoli wyświetla wyraźny monit. **Asystent AI ma bezwzględny obowiązek poprosić użytkownika o wykonanie tego zrzutu ekranu, przedstawiając szczegółowy opis, co dokładnie zrzut ma pokazywać** (stan okna, aktywne kontrolki, otwarte menu, zaznaczenia).
 
 ## 2. Architektura Aplikacji (Wersja 1.7.0)
 
@@ -141,7 +146,13 @@ Oparte na systemie Qt Style Sheets (QSS) dynamicznie generowanym w `get_btn_styl
 6.  **Ramki z danymi (Binary/Hex):** Pamiętaj, że aplikacja ma służyć m.in. do testowania protokołów binarnych (np. `ot_app_msg_tlv`). Zawsze przewiduj, że użytkownik wpisze ramkę szesnastkową ze spacjami, dlatego zawsze używaj bezpiecznego parsowania: `bytes.fromhex(payload.replace(" ", ""))`.
 7.  **Parsowanie RX dla przycisków:** Bufor binarnego odczytu potwierdzeń (`self.rx_buffer`) musi być niezależny od bufora tekstowego (`self.text_buffer`). Gdy przycisk (toggle) odnajdzie swoje ACK w `self.rx_buffer`, musi precyzyjnie wyciąć tylko ten zidentyfikowany ciąg bajtów (`replace(ack, b'')`), aby nie zniszczyć reszty danych. Bufor posiada zabezpieczenie przed przepełnieniem (czyszczenie powyżej 1024 bajtów).
 8.  **Autozapis:** Unikaj ciągłego, bezwarunkowego zapisu na dysk w głównej pętli. Zapisuj wywołując `self.save_current_settings_to_config(force=True)` tylko w momencie zmiany logiki konfiguracji przez usera (np. edycja przycisku, dodanie/edycja filtra).
-9.  **Zasady Dokumentacji i Skryptów Narzędziowych:**
+9.  **Zasady Dokumentacji i Skryptów Narzędziowych (`INSTRUKCJA.md`, `build_docs/`):**
+    *   Każda nowa funkcjonalność lub modyfikacja UI musi mieć odzwierciedlenie w `INSTRUKCJA.md` oraz posiadać dedykowany slajd w `SLIDES_DATA` w `build_docs/build_docs.py` i wpis w `build_docs/cleanup_screenshots.py`.
+    *   W `SLIDES_DATA` każdy slajd musi zawierać pole `image_description` precyzujące wymaganą zawartość zrzutu ekranu.
+    *   W przypadku braku pliku zrzutu na dysku:
+        - `build_docs.py` w konsoli wypisuje ostrzeżenie (`check_and_report_missing_images`) z opisem wymaganego zrzutu.
+        - `generate_pdf()` renderuje czytelny placeholder z ostrzeżeniem, nazwą oczekiwanego pliku i wytycznymi.
+        - Asystent AI w podsumowaniu swoich prac ma bezwzględny obowiązek zgłosić potrzebę wykonania zrzutu ekranu wraz ze szczegółowym opisem co dokładnie ten zrzut ma przedstawiać.
     *   Wszelkie narzędzia generatora dokumentacji (`build_docs/`) korzystają ze skalibrowanych współrzędnych i nie mogą zaśmiecać repozytorium plikami roboczymi.
     *   Katalogi tymczasowe `annotated_tmp/`, `_nieuzywane_zrzuty/` oraz pliki `*.tmp` muszą być bezwzględnie ignorowane w `.gitignore`.
 10. **Edycja i Kodowanie Plików:** Ze względu na polskie znaki w kodzie (np. "Połącz", "Rozłącz") i specyfikę systemu Windows, bezwzględnie unikaj używania komend terminalowych PowerShell (takich jak `Get-Content` i `Set-Content`) do modyfikacji plików tekstowych. PowerShell domyślnie niszczy kodowanie UTF-8 bez BOM powodując tzw. mojibake. Używaj wyłącznie natywnego narzędzia `replace_file_content` lub w razie konieczności krótkich skryptów Python z `encoding="utf-8"`.

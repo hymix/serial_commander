@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import sys
 from PyQt6.QtWidgets import QApplication
@@ -6,14 +8,15 @@ from PyQt6.QtGui import (QImage, QPainter, QColor, QPen, QFont, QPageSize,
 from PyQt6.QtCore import Qt, QRectF, QPointF, QMarginsF
 
 # ==============================================================================
-# SKALIBROWANA KONFIGURACJA 11 SLAJDÓW (POPRAWIONE POZYCJE STRZAŁEK I ZNAKÓW)
+# SKALIBROWANA KONFIGURACJA 12 SLAJDÓW (Z OBSŁUGĄ OPISÓW I ZRZUTÓW CAN)
 # ==============================================================================
 
 SLIDES_DATA = [
     {
-        "title": "1. Serial Commander v1.6 — Architektura i Główny Interfejs",
+        "title": "1. Serial Commander v1.7 — Architektura i Główny Interfejs",
         "subtitle": "Nowoczesny terminal diagnostyczny HMI / COM stworzony do pracy z systemami Embedded",
         "image_candidates": ["obraz_4.png", "Zrzut ekranu 2026-10-15 143034.png"],
+        "image_description": "Główny widok aplikacji w trybie pojedynczej karty z aktywnym połączeniem, zwiniętym panelem lewym, sekcją Live Watch i dolnym paskiem TX.",
         "annotations": [
             {"num": 1, "target": (0.31, 0.05), "badge": (0.31, 0.14), "color": "#37b24d"},
             {"num": 2, "target": (0.58, 0.11), "badge": (0.58, 0.03), "color": "#228be6"},
@@ -31,8 +34,9 @@ SLIDES_DATA = [
     },
     {
         "title": "2. Inteligentny Wybór Portu COM i Prędkości Baudrate",
-        "subtitle": "Kompaktowy widok w spoczynku oraz pełna identyfikacja sterowników po rozwinięciu listy",
+        "subtitle": "Kompaktowy widok w spoczynku, wykrywanie nowych portów oraz pełna identyfikacja sterowników",
         "image_candidates": ["Zrzut ekranu 2026-10-15 144322.png"],
+        "image_description": "Rozwinięte menu wyboru portu COM z szeroką listą urządzeń USB-UART oraz przyciskiem odświeżania portów.",
         "annotations": [
             {"num": 1, "target": (0.30, 0.11), "badge": (0.23, 0.11), "color": "#228be6"},
             {"num": 2, "target": (0.58, 0.20), "badge": (0.68, 0.20), "color": "#fcc419"},
@@ -41,8 +45,8 @@ SLIDES_DATA = [
         ],
         "bullets": [
             "[1] PortComboBox w spoczynku: Zajmuje tylko 82 px szerokości i wyświetla wyłącznie krótki kod portu (np. COM20).",
-            "[2] Rozwinięta lista urządzeń: Automatycznie poszerza się do 320 px, pokazując pełną nazwę sterownika (np. STLink, CH343, FTDI).",
-            "[3] Odświeżanie portów (Odśwież): Błyskawiczne skanowanie nowo podłączonych konwerterów USB-UART bez restartu aplikacji.",
+            "[2] Rozwinięta lista urządzeń: Poszerza się do 340 px, pokazując pełną nazwę sterownika, a nowo wykryte porty wyróżnia etykietą '✨ ... [NOWY]'.",
+            "[3] Odświeżanie portów (Odśwież): Błyskawiczne skanowanie nowo podłączonych konwerterów USB-UART i CANable bez restartu aplikacji.",
             "[4] Rozbudowany Baudrate: Standardowe prędkości aż do 1 000 000 bps oraz opcja 'Własny...' na dole listy dla nietypowych zegarów UART."
         ]
     },
@@ -50,6 +54,7 @@ SLIDES_DATA = [
         "title": "3. Sterowanie Liniami Sprzętowymi (DTR / RTS / Reset MCU)",
         "subtitle": "Zdalny restart mikrokontrolera i kontrola linii sterujących konwertera USB-UART",
         "image_candidates": ["Zrzut ekranu 2026-10-15 144357.png"],
+        "image_description": "Rozwinięte menu sprzętowe ⚙️ obok przycisku Połącz z opcjami DTR, RTS oraz impulsem Reset MCU.",
         "annotations": [
             {"num": 1, "target": (0.61, 0.11), "badge": (0.55, 0.04), "color": "#fcc419"},
             {"num": 2, "target": (0.60, 0.18), "badge": (0.48, 0.18), "color": "#4dabf7"},
@@ -65,6 +70,7 @@ SLIDES_DATA = [
         "title": "4. Panel Szybkich Akcji (PPM) i Potwierdzenia Sprzętowe ACK",
         "subtitle": "5 typów przycisków sterujących oraz inteligentna weryfikacja wykonania rozkazu przez sprzęt",
         "image_candidates": ["Zrzut ekranu 2026-10-15 144053.png"],
+        "image_description": "Okno modalne edycji przycisku szybkiej akcji z konfiguracją trybu TOGGLE, ramkami TX i potwierdzeniem ACK.",
         "annotations": [
             {"num": 1, "target": (0.18, 0.23), "badge": (0.26, 0.23), "color": "#228be6"},
             {"num": 2, "target": (0.52, 0.40), "badge": (0.76, 0.40), "color": "#fcc419"},
@@ -82,6 +88,7 @@ SLIDES_DATA = [
         "title": "5. Interaktywna Konsola: Zaznaczanie Tekstu i Menu PPM",
         "subtitle": "Błyskawiczne tworzenie filtrów, parserów oraz przypięć Live Watch wprost ze strumienia logów",
         "image_candidates": ["Zrzut ekranu 2026-10-15 144223.png"],
+        "image_description": "Menu kontekstowe PPM po zaznaczeniu fragmentu tekstu w konsoli z opcjami filtrów, parserów i Live Watch.",
         "annotations": [
             {"num": 1, "target": (0.41, 0.55), "badge": (0.29, 0.55), "color": "#4dabf7"},
             {"num": 2, "target": (0.43, 0.71), "badge": (0.29, 0.71), "color": "#fcc419"},
@@ -99,6 +106,7 @@ SLIDES_DATA = [
         "title": "6. Moduł Live Watch — Telemetria i Błyski Zmian (Token Diffing)",
         "subtitle": "Podgląd zmiennych procesowych i ramek CAN w jednym miejscu bez przewijania konsoli",
         "image_candidates": ["Zrzut ekranu 2026-10-15 143034.png", "obraz_4.png"],
+        "image_description": "Widok panelu Live Watch z przypiętymi zmiennymi telemetrycznymi i podświetleniem tokenów.",
         "annotations": [
             {"num": 1, "target": (0.31, 0.31), "badge": (0.27, 0.24), "color": "#fcc419"},
             {"num": 2, "target": (0.84, 0.35), "badge": (0.76, 0.24), "color": "#ff922b"},
@@ -116,6 +124,7 @@ SLIDES_DATA = [
         "title": "7. Filtry, Parsery Payloadu oraz Tryb Zapory (Whitelist)",
         "subtitle": "Pełna kontrola nad tym, co i w jakiej formie wyświetla się w oknie terminala",
         "image_candidates": ["Zrzut ekranu 2026-10-15 144422.png"],
+        "image_description": "Rozwinięta szuflada filtrów i parserów ze statusem ZAPORA na górnym pasku.",
         "annotations": [
             {"num": 1, "target": (0.94, 0.11), "badge": (0.94, 0.04), "color": "#228be6"},
             {"num": 2, "target": (0.85, 0.11), "badge": (0.80, 0.04), "color": "#e03131"},
@@ -133,6 +142,7 @@ SLIDES_DATA = [
         "title": "8. Menadżer Filtrów i Parserów — Zarządzanie Regułami",
         "subtitle": "Szybkie włączanie, wyłączanie, sortowanie i edycja reguł bez ich usuwania z profilu",
         "image_candidates": ["Zrzut ekranu 2026-10-15 143147.png"],
+        "image_description": "Okno dialogowe tabeli Menadżera Filtrów z kolumnami aktywności, wzorca i akcji.",
         "annotations": [
             {"num": 1, "target": (0.27, 0.32), "badge": (0.17, 0.32), "color": "#69db7c"},
             {"num": 2, "target": (0.43, 0.28), "badge": (0.43, 0.18), "color": "#4dabf7"},
@@ -148,6 +158,7 @@ SLIDES_DATA = [
         "title": "9. Symetryczny Widok Podzielony (Split View 50% / 50%)",
         "subtitle": "Równoległa diagnostyka dwóch portów COM (np. Nadajnik CAN1 i Odbiornik CAN2) na jednym ekranie",
         "image_candidates": ["Zrzut ekranu 2026-10-15 143340.png", "Zrzut ekranu 2026-10-15 144514.png"],
+        "image_description": "Widok podzielony z dwiema kartami 50/50 i zwiniętymi na zewnętrznych krawędziach panelami akcji.",
         "annotations": [
             {"num": 1, "target": (0.50, 0.50), "badge": (0.50, 0.35), "color": "#228be6"},
             {"num": 2, "target": (0.02, 0.17), "badge": (0.09, 0.25), "color": "#fcc419"},
@@ -164,6 +175,7 @@ SLIDES_DATA = [
         "title": "10. Split View — Przełączanie Kart w Nagłówku (Obsługa 3+ Kart)",
         "subtitle": "Swobodny wybór dowolnej z otwartych w tle kart na lewą lub prawą połowę ekranu",
         "image_candidates": ["Zrzut ekranu 2026-10-15 144530.png"],
+        "image_description": "Menu nagłówka karty w Split View z listą wyboru innych kart w tle oraz opcją zamiany miejscami Swap.",
         "annotations": [
             {"num": 1, "target": (0.14, 0.12), "badge": (0.35, 0.12), "color": "#fcc419"},
             {"num": 2, "target": (0.28, 0.17), "badge": (0.39, 0.17), "color": "#69db7c"},
@@ -179,6 +191,7 @@ SLIDES_DATA = [
         "title": "11. Profile Konfiguracji (cfg/), Narzędzia Raportowe i Eksport Logów",
         "subtitle": "Trwały zapis ustawień stanowiskowych, eksport do HTML/Markdown oraz obsługa z linii komend (CLI)",
         "image_candidates": ["Zrzut ekranu 2026-10-15 143355.png"],
+        "image_description": "Widok podzielony z rozwiniętymi panelami 20 przycisków na zewnętrznych krawędziach oraz centralnymi konsolami.",
         "annotations": [
             {"num": 1, "target": (0.06, 0.17), "badge": (0.15, 0.25), "color": "#fcc419"},
             {"num": 2, "target": (0.93, 0.17), "badge": (0.83, 0.25), "color": "#fcc419"},
@@ -190,15 +203,83 @@ SLIDES_DATA = [
             "[3] Zarządzanie Profilami (cfg/*.json): Automatyczny, atomowy zapis konfiguracji portu, przycisków, filtrów i przypięć Live Watch dla każdego urządzenia.",
             "[4] Eksport Logów (HTML / MD / TXT) i Markery: Zapis przebiegu sesji z metryczką diagnostyczną (Data, Wersja, Port) i pełnym zachowaniem kolorów w formacie HTML/MD."
         ]
+    },
+    {
+        "title": "12. Tryb Magistrali CAN (Adapter CANable / slcan)",
+        "subtitle": "Obsługa protokołu CANable, wysyłanie ramek cansend oraz telemetria Live Watch z czasem cyklu Delta_t",
+        "image_candidates": ["zrzut_can_mode.png", "Zrzut ekranu CAN mode.png", "Zrzut ekranu 2026-10-16 CAN.png"],
+        "image_description": (
+            "Zrzut ekranu karty pracującej w trybie CAN: pasek z etykietą 'Bitrate: 500k', "
+            "zielony wskaźnik połączenia '[ON] COM20 · CAN 500k', konsola z odebranymi ramkami "
+            "CAN w formacie '187#01 02 03 04', panel Live Watch z posortowanymi wierszami CAN ID, "
+            "wskaźnikami czasu cyklu 'Delta ... ms' oraz podświetlonymi (złotymi) zmienionymi bajtami. "
+            "Na dole pole wprowadzania z placeholderem '187#01 02 03'."
+        ),
+        "annotations": [
+            {"num": 1, "target": (0.35, 0.11), "badge": (0.35, 0.04), "color": "#228be6"},
+            {"num": 2, "target": (0.28, 0.31), "badge": (0.24, 0.24), "color": "#fcc419"},
+            {"num": 3, "target": (0.43, 0.31), "badge": (0.50, 0.24), "color": "#69db7c"},
+            {"num": 4, "target": (0.48, 0.97), "badge": (0.48, 0.88), "color": "#4dabf7"},
+        ],
+        "bullets": [
+            "[1] Konfiguracja i Bitrate CAN: Wybór prędkości magistrali (10k - 1M) w profilu połączenia CANable slcan.",
+            "[2] Sortowanie CAN ID i Czas Cyklu Delta_t: Wiersze Live Watch są automatycznie sortowane rosnąco po ID, z pomiarem odstępu czasowego Delta_t.",
+            "[3] Błysk Zmienionych Bajtów: Zmienione wartości danych w ramce błyskają na złoto na 750 ms, pozwalając śledzić zmiany w locie.",
+            "[4] Składnia cansend i Przyciski CAN: Nadawanie ramek standardowych i rozszerzonych w formacie 'ID#DANE' oraz obsługa ACK w przyciskach."
+        ]
     }
 ]
 
 
 def find_image_path(candidates):
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.abspath(os.path.join(base_dir, ".."))
+    search_dirs = [
+        ".",
+        base_dir,
+        project_root,
+        os.path.join(project_root, "build_docs"),
+    ]
     for name in candidates:
-        if os.path.exists(name):
-            return name
+        for sdir in search_dirs:
+            candidate_path = os.path.join(sdir, name)
+            if os.path.exists(candidate_path):
+                return candidate_path
     return None
+
+
+def _safe_print(text: str = "") -> None:
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        encoding = getattr(sys.stdout, "encoding", None) or "ascii"
+        print(text.encode(encoding, errors="replace").decode(encoding, errors="replace"))
+
+
+def check_and_report_missing_images():
+    """Weryfikuje obecność zrzutów ekranu i drukuje wyraźne instrukcje dla brakujących grafik."""
+    missing = []
+    for idx, slide in enumerate(SLIDES_DATA):
+        img_path = find_image_path(slide["image_candidates"])
+        if not img_path:
+            missing.append((idx + 1, slide))
+
+    if missing:
+        _safe_print("\n" + "=" * 80)
+        _safe_print("[!] UWAGA: WYKRYTO BRAKUJACE ZRZUTY EKRANU DLA DOKUMENTACJI!")
+        _safe_print("=" * 80)
+        for num, slide in missing:
+            _safe_print(f"\n[Slajd {num}] {slide['title']}")
+            _safe_print(f"  - Oczekiwany plik: {slide['image_candidates'][0]}")
+            if len(slide['image_candidates']) > 1:
+                _safe_print(f"  - Alternatywne nazwy: {', '.join(slide['image_candidates'][1:])}")
+            desc = slide.get("image_description", "Brak szczegółowego opisu.")
+            _safe_print("  - CO POWINIEN PRZEDSTAWIAC TEN ZRZUT:")
+            _safe_print(f"    {desc}")
+        _safe_print("\n" + "=" * 80)
+        _safe_print("Zapisz brakujace zrzuty ekranu w katalogu glownym lub 'build_docs/' i uruchom skrypt ponownie.")
+        _safe_print("=" * 80 + "\n")
+    return missing
 
 
 def draw_annotated_image(img_path, annotations):
@@ -304,10 +385,33 @@ def generate_pdf(output_pdf="Serial_Commander_Instrukcja.pdf"):
             painter.drawRect(QRectF(ix - 2, iy - 2, scaled_img.width() + 4, scaled_img.height() + 4))
             painter.drawImage(QPointF(ix, iy), scaled_img)
         else:
-            painter.setPen(QPen(QColor("#fa5252"), 2, Qt.PenStyle.DashLine))
+            # Estetyczny placeholder z opisem wymaganego zrzutu ekranu
+            painter.fillRect(img_box, QColor("#1c1917"))
+            painter.setPen(QPen(QColor("#f59f00"), 3, Qt.PenStyle.DashLine))
             painter.drawRect(img_box)
-            painter.drawText(img_box, Qt.AlignmentFlag.AlignCenter,
-                             f"Brak pliku obrazu: {slide['image_candidates'][0]}")
+
+            # Nagłówek ramki
+            warn_font = QFont("Segoe UI", 14, QFont.Weight.Bold)
+            painter.setFont(warn_font)
+            painter.setPen(QColor("#ffd43b"))
+            header_rect = QRectF(img_box.x() + 30, img_box.y() + 40, img_box.width() - 60, ph * 0.06)
+            painter.drawText(header_rect, Qt.AlignmentFlag.AlignCenter, "📷  WYMAGANY NOWY ZRZUT EKRANU DLA TEJ FUNKCJONALNOŚCI")
+
+            # Nazwa oczekiwanego pliku
+            file_font = QFont("Consolas", 11, QFont.Weight.Bold)
+            painter.setFont(file_font)
+            painter.setPen(QColor("#74c0fc"))
+            file_rect = QRectF(img_box.x() + 30, img_box.y() + 90, img_box.width() - 60, ph * 0.05)
+            painter.drawText(file_rect, Qt.AlignmentFlag.AlignCenter, f"Oczekiwany plik: {slide['image_candidates'][0]}")
+
+            # Opis co zrzut ma przedstawiać
+            desc_font = QFont("Segoe UI", 10, QFont.Weight.Normal)
+            painter.setFont(desc_font)
+            painter.setPen(QColor("#e4e4e7"))
+            desc_text_rect = QRectF(img_box.x() + 80, img_box.y() + 140, img_box.width() - 160, img_box.height() - 170)
+            desc = slide.get("image_description", "Proszę wykonać zrzut ekranu prezentujący tę nową funkcję i zapisać go pod wskazaną nazwą.")
+            painter.drawText(desc_text_rect, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop | Qt.TextFlag.TextWordWrap,
+                             f"WYTYCZNE DLA ZRZUTU EKRANU:\n{desc}")
 
         # Sekcja opisów punktowych na dole slajdu (72% -> 96% wysokości)
         desc_box = QRectF(margin_x, ph * 0.72, pw - 2 * margin_x, ph * 0.24)
@@ -333,7 +437,7 @@ def generate_pdf(output_pdf="Serial_Commander_Instrukcja.pdf"):
         painter.setPen(QColor("#71717a"))
         painter.drawText(QRectF(margin_x, ph * 0.965, pw - 2 * margin_x, ph * 0.03),
                          Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
-                         f"Serial Commander v1.6.0 — Dokumentacja Techniczna  |  Slajd {idx + 1} / {len(SLIDES_DATA)}")
+                         f"Serial Commander v1.7.0 — Dokumentacja Techniczna  |  Slajd {idx + 1} / {len(SLIDES_DATA)}")
 
     painter.end()
     print(f"[OK] Wygenerowano dokumentację PDF: {output_pdf}")
@@ -353,7 +457,9 @@ def generate_pptx(output_pptx="Serial_Commander_Prezentacja.pptx"):
     prs.slide_height = Inches(7.5)
     blank_layout = prs.slide_layouts[6]
 
-    os.makedirs("annotated_tmp", exist_ok=True)
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    tmp_dir = os.path.join(script_dir, "annotated_tmp")
+    os.makedirs(tmp_dir, exist_ok=True)
 
     for idx, slide_data in enumerate(SLIDES_DATA):
         slide = prs.slides.add_slide(blank_layout)
@@ -380,9 +486,26 @@ def generate_pptx(output_pptx="Serial_Commander_Prezentacja.pptx"):
         img_path = find_image_path(slide_data["image_candidates"])
         if img_path:
             ann_img = draw_annotated_image(img_path, slide_data["annotations"])
-            tmp_file = os.path.join("annotated_tmp", f"slide_{idx+1}.png")
+            tmp_file = os.path.join(tmp_dir, f"slide_{idx+1}.png")
             ann_img.save(tmp_file)
             slide.shapes.add_picture(tmp_file, Inches(1.2), Inches(1.1), height=Inches(4.2))
+        else:
+            # Placeholder shape dla brakującego zrzutu
+            tb_ph = slide.shapes.add_textbox(Inches(1.2), Inches(1.1), Inches(10.9), Inches(4.0))
+            tf_ph = tb_ph.text_frame
+            tf_ph.word_wrap = True
+            p_ph1 = tf_ph.paragraphs[0]
+            p_ph1.text = f"📷 WYMAGANY NOWY ZRZUT EKRANU: {slide_data['image_candidates'][0]}"
+            p_ph1.font.size = Pt(16)
+            p_ph1.font.bold = True
+            p_ph1.font.color.rgb = RGBColor(255, 212, 59)
+
+            desc = slide_data.get("image_description", "")
+            if desc:
+                p_ph2 = tf_ph.add_paragraph()
+                p_ph2.text = f"\nWytyczne: {desc}"
+                p_ph2.font.size = Pt(12)
+                p_ph2.font.color.rgb = RGBColor(200, 200, 200)
 
         # Punkty opisowe na dole
         tb_desc = slide.shapes.add_textbox(Inches(0.5), Inches(5.4), Inches(12.3), Inches(1.9))
@@ -400,5 +523,7 @@ def generate_pptx(output_pptx="Serial_Commander_Prezentacja.pptx"):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    generate_pdf("Serial_Commander_Instrukcja.pdf")
-    generate_pptx("Serial_Commander_Prezentacja.pptx")
+    check_and_report_missing_images()
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    generate_pdf(os.path.join(script_dir, "Serial_Commander_Instrukcja.pdf"))
+    generate_pptx(os.path.join(script_dir, "Serial_Commander_Prezentacja.pptx"))
