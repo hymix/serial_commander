@@ -15,12 +15,12 @@ import serial.tools.list_ports
 from datetime import datetime
 from PyQt6.QtWidgets import (QTableWidget, QTableWidgetItem, QAbstractItemView, QHeaderView, 
                              QStackedWidget, QApplication, QListWidget, QTabWidget, QMainWindow, 
-                             QPushButton, QVBoxLayout, QHBoxLayout, QWidget, QTextEdit, 
+                             QPushButton, QVBoxLayout, QHBoxLayout, QWidget, QTextEdit, QPlainTextEdit,
                              QComboBox, QLabel, QMessageBox, QLineEdit, QRadioButton, 
                              QScrollArea, QDialog, QFormLayout, QDialogButtonBox, QCheckBox, 
                              QInputDialog, QSpinBox, QFileDialog, QMenu, QFrame, QSizePolicy)
 from PyQt6.QtCore import QThread, pyqtSignal, Qt, QSize, QTimer
-from PyQt6.QtGui import QIcon, QPixmap, QColor, QTextDocument, QTextCursor, QShortcut, QKeySequence, QAction
+from PyQt6.QtGui import QIcon, QPixmap, QColor, QTextDocument, QTextCursor, QShortcut, QKeySequence, QAction, QFont
 
 from can_support import (CAN_AVAILABLE, CAN_IMPORT_ERROR, CAN_BITRATES, DEFAULT_CAN_BITRATE,
                          TRANSPORT_SERIAL, TRANSPORT_SLCAN, TRANSPORTS, TRANSPORT_LABELS,
@@ -30,7 +30,7 @@ from can_support import (CAN_AVAILABLE, CAN_IMPORT_ERROR, CAN_BITRATES, DEFAULT_
 
 CFG_DIR = "cfg"
 APP_SETTINGS_FILE = os.path.join(CFG_DIR, "app_settings.json")
-APP_VERSION = "1.7.1"
+APP_VERSION = "1.7.2"
 
 # ==========================================
 # GLOBALNY MOTYW CIEMNY (QSS)
@@ -63,14 +63,14 @@ QTabBar::tab:selected {
 QTabBar::tab:hover:!selected {
     background-color: #3f3f46;
 }
-QLineEdit, QComboBox, QSpinBox, QListWidget, QTableWidget {
+QLineEdit, QPlainTextEdit, QTextEdit, QComboBox, QSpinBox, QListWidget, QTableWidget {
     background-color: #27272a;
     border: 1px solid #3f3f46;
     border-radius: 4px;
     padding: 3px 6px;
     color: #f4f4f5;
 }
-QLineEdit:focus, QComboBox:focus, QSpinBox:focus {
+QLineEdit:focus, QPlainTextEdit:focus, QTextEdit:focus, QComboBox:focus, QSpinBox:focus {
     border: 1px solid #228be6;
 }
 QComboBox QAbstractItemView {
@@ -446,19 +446,133 @@ class LiveWatchRowWidget(QFrame):
 # ==========================================
 # 2. OKNA DIALOGOWE EDYCJI
 # ==========================================
+
+CAN_BUTTON_EXAMPLES = {
+    "push_tx": "187#01 02 03 04",
+    "tog_tx_on": "187#01",
+    "tog_tx_off": "187#00",
+    "tog_ack_on": "581#01*",
+    "tog_ack_off": "581#00*",
+    "hld_tx_on": "187#01",
+    "hld_tx_off": "187#00",
+    "trig_tx": "187#01 02 03 04",
+    "mac_tx": "187#01 02;\nsleep(100);\n187#00",
+}
+
+CAN_BUTTON_PLACEHOLDERS = {
+    "push_tx": "np. 187#01 02 03 04",
+    "tog_tx_on": "np. 187#01",
+    "tog_tx_off": "np. 187#00",
+    "tog_ack_on": "np. 581#01* (lub 581#)",
+    "tog_ack_off": "np. 581#00* (lub 581#)",
+    "hld_tx_on": "np. 187#01",
+    "hld_tx_off": "np. 187#00",
+    "trig_tx": "np. 187#01 02 03 04",
+    "mac_tx": "np. 187#01 02;\nsleep(100);\n187#00",
+}
+
+
+class ClickToClearLineEdit(QLineEdit):
+    """Pole tekstowe z obsługą przykładowego tekstu znikającego natychmiast po kliknięciu myszą."""
+    def __init__(self, text: str = "", example_text: str = "", parent=None):
+        super().__init__(parent)
+        self.is_example = False
+        self.example_text = example_text
+        if text:
+            self.setText(text)
+        elif example_text:
+            self.set_example(example_text)
+
+    def set_example(self, example: str):
+        self.example_text = example
+        super().setText(example)
+        self.is_example = True
+        self.setStyleSheet("color: #868e96; font-style: italic;")
+
+    def clear_example(self):
+        if self.is_example:
+            super().setText("")
+            self.is_example = False
+            self.setStyleSheet("")
+
+    def setText(self, text: str):
+        self.is_example = False
+        self.setStyleSheet("")
+        super().setText(text)
+
+    def mousePressEvent(self, event):
+        self.clear_example()
+        super().mousePressEvent(event)
+
+    def keyPressEvent(self, event):
+        if self.is_example:
+            key = event.key()
+            if key not in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab, Qt.Key.Key_Shift, Qt.Key.Key_Control, Qt.Key.Key_Alt):
+                self.clear_example()
+        super().keyPressEvent(event)
+
+
+class ClickToClearPlainTextEdit(QPlainTextEdit):
+    """Wieloliniowe pole edycyjne sekwencji makra znikające natychmiast po kliknięciu myszą."""
+    def __init__(self, text: str = "", example_text: str = "", parent=None):
+        super().__init__(parent)
+        self.is_example = False
+        self.example_text = example_text
+        font = QFont("Consolas", 10)
+        font.setStyleHint(QFont.StyleHint.Monospace)
+        self.setFont(font)
+        if text:
+            self.setPlainText(text)
+        elif example_text:
+            self.set_example(example_text)
+
+    def set_example(self, example: str):
+        self.example_text = example
+        super().setPlainText(example)
+        self.is_example = True
+        self.setStyleSheet("color: #868e96; font-style: italic;")
+
+    def clear_example(self):
+        if self.is_example:
+            super().setPlainText("")
+            self.is_example = False
+            self.setStyleSheet("")
+
+    def setPlainText(self, text: str):
+        self.is_example = False
+        self.setStyleSheet("")
+        super().setPlainText(text)
+
+    def mousePressEvent(self, event):
+        self.clear_example()
+        super().mousePressEvent(event)
+
+    def keyPressEvent(self, event):
+        if self.is_example:
+            key = event.key()
+            if key not in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab, Qt.Key.Key_Shift, Qt.Key.Key_Control, Qt.Key.Key_Alt):
+                self.clear_example()
+        super().keyPressEvent(event)
+
+
 class ButtonEditDialog(QDialog):
     def __init__(self, btn_data, parent=None, is_can_mode: bool = False):
         super().__init__(parent)
         self.setWindowTitle(f"Edytuj {btn_data.get('name', 'Przycisk')}")
         self.btn_data = btn_data
         self.is_can_mode = is_can_mode
+        self.delete_requested = False
         
-        self.resize(420, 410)
+        self.resize(480, 500)
         self.main_layout = QVBoxLayout(self)
+        self.main_layout.setSpacing(8)
+        
+        # Nowy przycisk to taki, który nie był jeszcze włączony/używany
+        is_new_btn = not btn_data.get("is_used", False)
         
         top_layout = QFormLayout()
         self.cb_is_used = QCheckBox("Włącz/Aktywuj przycisk")
-        self.cb_is_used.setChecked(btn_data.get("is_used", True))
+        self.cb_is_used.setChecked(True if is_new_btn else btn_data.get("is_used", True))
         top_layout.addRow(self.cb_is_used)
 
         self.le_name = QLineEdit(btn_data.get("name", ""))
@@ -475,33 +589,70 @@ class ButtonEditDialog(QDialog):
         
         self.combo_payload_type = QComboBox()
         self.combo_payload_type.addItems(["ASCII", "HEX", "CAN"])
-        default_pt = "CAN" if is_can_mode else "ASCII"
-        self.combo_payload_type.setCurrentText(btn_data.get("payload_type", default_pt))
-        top_layout.addRow("Format TX:", self.combo_payload_type)
         
+        if self.is_can_mode:
+            self.combo_payload_type.setCurrentText("CAN")
+            self.combo_payload_type.setEnabled(False)
+            self.combo_payload_type.setToolTip("W profilu trybu CAN format transmisji przycisków jest na stałe zablokowany na CAN.")
+        else:
+            self.combo_payload_type.setCurrentText(btn_data.get("payload_type", "ASCII"))
+            
+        top_layout.addRow("Format TX:", self.combo_payload_type)
         self.main_layout.addLayout(top_layout)
         
-        self.info_label = QLabel()
-        self.info_label.setWordWrap(True)
-        self.info_label.setStyleSheet("color: #aaaaaa; font-style: italic; margin-bottom: 5px;")
-        self.main_layout.addWidget(self.info_label)
+        # Ramka z informacją o składni i działaniu wybranego typu przycisku
+        self.info_frame = QFrame()
+        self.info_frame.setStyleSheet("""
+            QFrame {
+                background-color: #1a1b1e;
+                border: 1px solid #2c2e33;
+                border-radius: 6px;
+                padding: 6px 10px;
+            }
+        """)
+        info_layout = QVBoxLayout(self.info_frame)
+        info_layout.setContentsMargins(8, 6, 8, 6)
+        info_layout.setSpacing(3)
+        
+        self.info_syntax = QLabel()
+        self.info_syntax.setWordWrap(True)
+        self.info_syntax.setStyleSheet("font-size: 11px; color: #ffd43b; font-weight: bold; background: transparent; border: none;")
+        
+        self.info_desc = QLabel()
+        self.info_desc.setWordWrap(True)
+        self.info_desc.setStyleSheet("font-size: 11px; color: #ced4da; background: transparent; border: none;")
+        
+        info_layout.addWidget(self.info_syntax)
+        info_layout.addWidget(self.info_desc)
+        self.main_layout.addWidget(self.info_frame)
         
         self.stack = QStackedWidget()
+        
+        # Wartości początkowe (dla nowego przycisku w trybie CAN ignorujemy domyślne śmieci UART)
+        use_can_defaults = self.is_can_mode or (btn_data.get("payload_type") == "CAN")
         
         # PUSH
         self.page_push = QWidget()
         l_push = QFormLayout(self.page_push)
-        self.le_push_tx = QLineEdit(btn_data.get("tx", ""))
+        push_val = "" if is_new_btn else btn_data.get("tx", "")
+        push_ex = CAN_BUTTON_EXAMPLES["push_tx"] if use_can_defaults else ""
+        self.le_push_tx = ClickToClearLineEdit(push_val, example_text=push_ex)
         l_push.addRow("TX:", self.le_push_tx)
         self.stack.addWidget(self.page_push)
         
         # TOGGLE
         self.page_toggle = QWidget()
         l_toggle = QFormLayout(self.page_toggle)
-        self.le_tog_tx_on = QLineEdit(btn_data.get("tx_on", ""))
-        self.le_tog_tx_off = QLineEdit(btn_data.get("tx_off", ""))
-        self.le_tog_ack_on = QLineEdit(btn_data.get("ack_on", ""))
-        self.le_tog_ack_off = QLineEdit(btn_data.get("ack_off", ""))
+        tog_on_val = "" if is_new_btn else btn_data.get("tx_on", "")
+        tog_off_val = "" if is_new_btn else btn_data.get("tx_off", "")
+        ack_on_val = "" if is_new_btn else btn_data.get("ack_on", "")
+        ack_off_val = "" if is_new_btn else btn_data.get("ack_off", "")
+        
+        self.le_tog_tx_on = ClickToClearLineEdit(tog_on_val, example_text=CAN_BUTTON_EXAMPLES["tog_tx_on"] if use_can_defaults else "")
+        self.le_tog_tx_off = ClickToClearLineEdit(tog_off_val, example_text=CAN_BUTTON_EXAMPLES["tog_tx_off"] if use_can_defaults else "")
+        self.le_tog_ack_on = ClickToClearLineEdit(ack_on_val, example_text=CAN_BUTTON_EXAMPLES["tog_ack_on"] if use_can_defaults else "")
+        self.le_tog_ack_off = ClickToClearLineEdit(ack_off_val, example_text=CAN_BUTTON_EXAMPLES["tog_ack_off"] if use_can_defaults else "")
+        
         l_toggle.addRow("TX ON:", self.le_tog_tx_on)
         l_toggle.addRow("TX OFF:", self.le_tog_tx_off)
         l_toggle.addRow("ACK ON:", self.le_tog_ack_on)
@@ -511,8 +662,10 @@ class ButtonEditDialog(QDialog):
         # HOLD
         self.page_hold = QWidget()
         l_hold = QFormLayout(self.page_hold)
-        self.le_hld_tx_on = QLineEdit(btn_data.get("tx_on", ""))
-        self.le_hld_tx_off = QLineEdit(btn_data.get("tx_off", ""))
+        hld_on_val = "" if is_new_btn else btn_data.get("tx_on", "")
+        hld_off_val = "" if is_new_btn else btn_data.get("tx_off", "")
+        self.le_hld_tx_on = ClickToClearLineEdit(hld_on_val, example_text=CAN_BUTTON_EXAMPLES["hld_tx_on"] if use_can_defaults else "")
+        self.le_hld_tx_off = ClickToClearLineEdit(hld_off_val, example_text=CAN_BUTTON_EXAMPLES["hld_tx_off"] if use_can_defaults else "")
         l_hold.addRow("TX (Wciśnięty):", self.le_hld_tx_on)
         l_hold.addRow("TX (Puszczony):", self.le_hld_tx_off)
         self.stack.addWidget(self.page_hold)
@@ -520,7 +673,8 @@ class ButtonEditDialog(QDialog):
         # TRIGGER
         self.page_trigger = QWidget()
         l_trig = QFormLayout(self.page_trigger)
-        self.le_trig_tx = QLineEdit(btn_data.get("tx", ""))
+        trig_val = "" if is_new_btn else btn_data.get("tx", "")
+        self.le_trig_tx = ClickToClearLineEdit(trig_val, example_text=CAN_BUTTON_EXAMPLES["trig_tx"] if use_can_defaults else "")
         self.spin_trig_int = QSpinBox()
         self.spin_trig_int.setRange(10, 600000)
         self.spin_trig_int.setValue(btn_data.get("interval", 1000))
@@ -529,11 +683,24 @@ class ButtonEditDialog(QDialog):
         l_trig.addRow("Interwał:", self.spin_trig_int)
         self.stack.addWidget(self.page_trigger)
         
-        # MACRO
+        # MACRO (duże pole QPlainTextEdit z obsługą wielu linii i średników)
         self.page_macro = QWidget()
-        l_macro = QFormLayout(self.page_macro)
-        self.le_mac_tx = QLineEdit(btn_data.get("tx", ""))
-        l_macro.addRow("Sekwencja:", self.le_mac_tx)
+        l_macro = QVBoxLayout(self.page_macro)
+        l_macro.setContentsMargins(0, 0, 0, 0)
+        l_macro.setSpacing(4)
+        
+        lbl_macro_seq = QLabel("Sekwencja komend / ramek:")
+        lbl_macro_seq.setStyleSheet("font-weight: bold; color: #ced4da;")
+        l_macro.addWidget(lbl_macro_seq)
+        
+        mac_val = "" if is_new_btn else btn_data.get("tx", "")
+        self.le_mac_tx = ClickToClearPlainTextEdit(mac_val, example_text=CAN_BUTTON_EXAMPLES["mac_tx"] if use_can_defaults else "")
+        self.le_mac_tx.setMinimumHeight(130)
+        l_macro.addWidget(self.le_mac_tx)
+        
+        lbl_macro_hint = QLabel("💡 Rozdzielaj komendy średnikami ';' lub nowymi liniami. Pauzy czasowe: sleep(milisekundy).")
+        lbl_macro_hint.setStyleSheet("color: #868e96; font-size: 11px;")
+        l_macro.addWidget(lbl_macro_hint)
         self.stack.addWidget(self.page_macro)
         
         self.main_layout.addWidget(self.stack)
@@ -542,26 +709,43 @@ class ButtonEditDialog(QDialog):
         buttons.button(QDialogButtonBox.StandardButton.Discard).setText("Usuń / Wyczyść")
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-        self.delete_requested = False
         buttons.button(QDialogButtonBox.StandardButton.Discard).clicked.connect(self.on_delete)
         self.main_layout.addWidget(buttons)
         
         self.combo_type.currentTextChanged.connect(self.update_stack)
         self.combo_payload_type.currentTextChanged.connect(self.on_payload_type_changed)
+        
         self.update_stack(self.combo_type.currentText())
         self.on_payload_type_changed(self.combo_payload_type.currentText())
 
     def on_payload_type_changed(self, ptype):
         if ptype == "CAN":
-            self.le_push_tx.setPlaceholderText("np. 187#01 00 00 00 40 7D 00 00")
-            self.le_tog_tx_on.setPlaceholderText("np. 187#01")
-            self.le_tog_tx_off.setPlaceholderText("np. 187#00")
-            self.le_tog_ack_on.setPlaceholderText("np. 581#01* (lub 581#)")
-            self.le_tog_ack_off.setPlaceholderText("np. 581#00* (lub 581#)")
-            self.le_hld_tx_on.setPlaceholderText("np. 187#01")
-            self.le_hld_tx_off.setPlaceholderText("np. 187#00")
-            self.le_trig_tx.setPlaceholderText("np. 187#01 02 03")
-            self.le_mac_tx.setPlaceholderText("np. 187#01; sleep(100); 187#00")
+            self.le_push_tx.setPlaceholderText(CAN_BUTTON_PLACEHOLDERS["push_tx"])
+            self.le_tog_tx_on.setPlaceholderText(CAN_BUTTON_PLACEHOLDERS["tog_tx_on"])
+            self.le_tog_tx_off.setPlaceholderText(CAN_BUTTON_PLACEHOLDERS["tog_tx_off"])
+            self.le_tog_ack_on.setPlaceholderText(CAN_BUTTON_PLACEHOLDERS["tog_ack_on"])
+            self.le_tog_ack_off.setPlaceholderText(CAN_BUTTON_PLACEHOLDERS["tog_ack_off"])
+            self.le_hld_tx_on.setPlaceholderText(CAN_BUTTON_PLACEHOLDERS["hld_tx_on"])
+            self.le_hld_tx_off.setPlaceholderText(CAN_BUTTON_PLACEHOLDERS["hld_tx_off"])
+            self.le_trig_tx.setPlaceholderText(CAN_BUTTON_PLACEHOLDERS["trig_tx"])
+            self.le_mac_tx.setPlaceholderText(CAN_BUTTON_PLACEHOLDERS["mac_tx"])
+            
+            # Wypełnienie pól przykładami CAN, jeśli są puste lub są aktywnymi przykładami
+            fields = [
+                (self.le_push_tx, CAN_BUTTON_EXAMPLES["push_tx"]),
+                (self.le_tog_tx_on, CAN_BUTTON_EXAMPLES["tog_tx_on"]),
+                (self.le_tog_tx_off, CAN_BUTTON_EXAMPLES["tog_tx_off"]),
+                (self.le_tog_ack_on, CAN_BUTTON_EXAMPLES["tog_ack_on"]),
+                (self.le_tog_ack_off, CAN_BUTTON_EXAMPLES["tog_ack_off"]),
+                (self.le_hld_tx_on, CAN_BUTTON_EXAMPLES["hld_tx_on"]),
+                (self.le_hld_tx_off, CAN_BUTTON_EXAMPLES["hld_tx_off"]),
+                (self.le_trig_tx, CAN_BUTTON_EXAMPLES["trig_tx"]),
+            ]
+            for f, ex in fields:
+                if not f.text().strip() or f.is_example:
+                    f.set_example(ex)
+            if not self.le_mac_tx.toPlainText().strip() or self.le_mac_tx.is_example:
+                self.le_mac_tx.set_example(CAN_BUTTON_EXAMPLES["mac_tx"])
         elif ptype == "HEX":
             self.le_push_tx.setPlaceholderText("np. AA 01 02")
             self.le_tog_tx_on.setPlaceholderText("np. AA 01")
@@ -582,19 +766,66 @@ class ButtonEditDialog(QDialog):
             self.le_hld_tx_off.setPlaceholderText("")
             self.le_trig_tx.setPlaceholderText("")
             self.le_mac_tx.setPlaceholderText("np. cmd1; sleep(500); cmd2")
+            
+        self.update_stack(self.combo_type.currentText())
         
     def update_stack(self, text):
         mapping = {"push": 0, "toggle": 1, "hold": 2, "trigger": 3, "macro": 4}
         self.stack.setCurrentIndex(mapping.get(text, 0))
         
-        infos = {
-            "push": "ℹ️ Kliknięcie wysyła podaną ramkę jeden raz.",
-            "toggle": "ℹ️ Przełącza tryb ON/OFF. W trybie CAN potwierdzenie ACK dopasowywane jest do odebranej ramki (np. '581#01*' lub '581#').",
-            "hold": "ℹ️ Wysyła ramkę wciśnięcia gdy wciśniesz przycisk myszką, oraz ramkę puszczenia w momencie jego zwolnienia.",
-            "trigger": "ℹ️ Pętla asynchroniczna. W trybie CAN realizuje cykliczne nadawanie ramki na magistralę co zadany interwał (ms). Ponowne kliknięcie zatrzymuje.",
-            "macro": "ℹ️ Wykonuje łańcuch komend/ramek CAN rozdzielonych średnikiem. Obsługuje pauzy 'sleep(milisekundy)', np. '187#01; sleep(100); 187#00'."
-        }
-        self.info_label.setText(infos.get(text, ""))
+        is_can = (self.combo_payload_type.currentText() == "CAN") or self.is_can_mode
+        
+        if is_can:
+            can_syntax_map = {
+                "push": (
+                    "📌 Składnia CAN: ID#DANE (np. 187#01 02 03 04, 18FEF100#AABB, 65A#R)",
+                    "Wysyła pojedynczą ramkę CAN na magistralę natychmiast po kliknięciu."
+                ),
+                "toggle": (
+                    "📌 Składnia CAN: ID#DANE | Wzorzec ACK: ID#DANE* (np. 581#01* lub 581#)",
+                    "Przełącznik ON/OFF. Nadaje 'TX ON' lub 'TX OFF'. Kolor zmieni się dopiero po odebraniu ramki pasującej do wzorca ACK!"
+                ),
+                "hold": (
+                    "📌 Składnia CAN: ID#DANE (np. Wciśnięty: 187#01, Puszczony: 187#00)",
+                    "Przycisk chwilowy: nadaje ramkę wciśnięcia po naciśnięciu i ramkę puszczenia w momencie zwolnienia."
+                ),
+                "trigger": (
+                    "📌 Składnia CAN: ID#DANE (np. 187#01 02 03 04)",
+                    "Generator cykliczny: nadaje ramkę w pętli co zadany interwał (ms). Ponowne kliknięcie zatrzymuje nadawanie."
+                ),
+                "macro": (
+                    "📌 Składnia CAN: sekwencja ramek rozdzielonych ';' lub nowymi liniami, pauzy: sleep(ms)",
+                    "Przykład: '187#01 02; sleep(100); 187#00'. Sekwencja wykonywana jest w osobnym wątku roboczym."
+                )
+            }
+            syntax, desc = can_syntax_map.get(text, ("", ""))
+        else:
+            uart_syntax_map = {
+                "push": (
+                    "📌 Format: ASCII / HEX (np. AA 01 02)",
+                    "Kliknięcie wysyła podaną ramkę jeden raz."
+                ),
+                "toggle": (
+                    "📌 Format: ASCII / HEX | Oczekiwane ACK: bajty lub tekst potwierdzenia",
+                    "Przełącza tryb ON/OFF. Stan przycisku zmieni się dopiero po odebraniu potwierdzenia ACK."
+                ),
+                "hold": (
+                    "📌 Format: ASCII / HEX",
+                    "Wysyła ramkę wciśnięcia po naciśnięciu przycisku myszą oraz puszczenia po zwolnieniu."
+                ),
+                "trigger": (
+                    "📌 Format: ASCII / HEX",
+                    "Pętla asynchroniczna wysyłająca ramkę co zadany interwał (ms)."
+                ),
+                "macro": (
+                    "📌 Format: komendy rozdzielone ';' lub nowymi liniami, pauzy: sleep(ms)",
+                    "Wykonuje sekwencję komend rozdzielonych średnikiem lub nową linią z opóźnieniami sleep(ms)."
+                )
+            }
+            syntax, desc = uart_syntax_map.get(text, ("", ""))
+            
+        self.info_syntax.setText(syntax)
+        self.info_desc.setText(desc)
 
     def on_delete(self):
         self.delete_requested = True
@@ -612,23 +843,23 @@ class ButtonEditDialog(QDialog):
             "type": t,
             "name": self.le_name.text(),
             "show_marker": self.cb_show_marker.isChecked(),
-            "payload_type": self.combo_payload_type.currentText()
+            "payload_type": "CAN" if self.is_can_mode else self.combo_payload_type.currentText()
         }
         if t == "push":
-            res["tx"] = self.le_push_tx.text()
+            res["tx"] = self.le_push_tx.text().strip()
         elif t == "toggle":
-            res["tx_on"] = self.le_tog_tx_on.text()
-            res["tx_off"] = self.le_tog_tx_off.text()
-            res["ack_on"] = self.le_tog_ack_on.text()
-            res["ack_off"] = self.le_tog_ack_off.text()
+            res["tx_on"] = self.le_tog_tx_on.text().strip()
+            res["tx_off"] = self.le_tog_tx_off.text().strip()
+            res["ack_on"] = self.le_tog_ack_on.text().strip()
+            res["ack_off"] = self.le_tog_ack_off.text().strip()
         elif t == "hold":
-            res["tx_on"] = self.le_hld_tx_on.text()
-            res["tx_off"] = self.le_hld_tx_off.text()
+            res["tx_on"] = self.le_hld_tx_on.text().strip()
+            res["tx_off"] = self.le_hld_tx_off.text().strip()
         elif t == "trigger":
-            res["tx"] = self.le_trig_tx.text()
+            res["tx"] = self.le_trig_tx.text().strip()
             res["interval"] = self.spin_trig_int.value()
         elif t == "macro":
-            res["tx"] = self.le_mac_tx.text()
+            res["tx"] = self.le_mac_tx.toPlainText().strip()
             
         return res
 
@@ -831,7 +1062,9 @@ class MacroRunner(QThread):
         self.payload_type = payload_type
         
     def run(self):
-        commands = self.sequence.split(';')
+        # Obsługa sekwencji rozdzielanych średnikami ';' lub nowymi liniami '\n'
+        raw_sequence = self.sequence.replace('\r', '').replace('\n', ';')
+        commands = raw_sequence.split(';')
         for cmd in commands:
             cmd = cmd.strip()
             if not cmd:
@@ -3223,7 +3456,8 @@ class SerialTab(QWidget):
     def on_macro_clicked(self, idx: int):
         btn_cfg = self.app_config["buttons"][idx]
         sequence = btn_cfg.get("tx", "")
-        self.log_info(f"Start Macro: {btn_cfg['name']} -> {sequence}")
+        seq_display = sequence.replace('\r', '').replace('\n', '; ')
+        self.log_info(f"Start Macro: {btn_cfg['name']} -> {seq_display}")
         
         self.macro_runners = [r for r in self.macro_runners if r.isRunning()]
         

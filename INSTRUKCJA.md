@@ -49,13 +49,19 @@ Obok przycisku `Połącz` / `Rozłącz` znajduje się przycisk menu sprzętowego
 
 > **Wskazówka:** Aby skonfigurować lub edytować dowolny z 10 przycisków po lewej stronie, **kliknij na niego Prawym Przyciskiem Myszy (PPM)**. Po najechaniu kursorem na skonfigurowany przycisk wyświetli się dymek (Tooltip) z podglądem przypisanych ramek.
 
-Każdy przycisk może pracować w jednym z **5 trybów** (w formacie `ASCII` lub `HEX`):
+Każdy przycisk może pracować w jednym z **5 trybów** (w formacie `ASCII`, `HEX` lub `CAN`):
 1. **`⚡ Push` (Niebieski):** Pojedyncze kliknięcie wysyła zdefiniowaną ramkę `TX` jeden raz.
 2. **`🔘 Toggle` (Zielony ON / Czerwony OFF):** Przełącznik dwustanowy z **weryfikacją sprzętową ACK**. Kliknięcie wysyła ramkę `TX ON` lub `TX OFF`, ale **kolor i stan przycisku na panelu zmieni się TYLKO wtedy, gdy urządzenie odeśle zdefiniowaną ramkę potwierdzenia (`ACK ON` / `ACK OFF`)**.
 3. **`⏳ Hold` (Pomarańczowy):** Wysyła ramkę `TX (Wciśnięty)` w momencie naciśnięcia przycisku myszą oraz `TX (Puszczony)` w momencie zwolnienia przycisku.
 4. **`🔁 Trigger` (Szaroniebieski / Pomarańczowy w pracy):** Generator pętli asynchronicznej. Po kliknięciu cyklicznie wysyła ramkę `TX` co zadany interwał (w milisekundach) aż do ponownego kliknięcia.
-5. **`📜 Macro` (Fioletowy):** Wykonuje sekwencję komend rozdzielonych średnikiem z obsługą opóźnień czasowych, np.:
-   `AA 01; sleep(500); BB 02; sleep(1000); CC 03`.
+5. **`📜 Macro` (Fioletowy):** Posiada powiększone, wieloliniowe pole tekstowe do definiowania sekwencji komend i ramek rozdzielonych średnikami `;` lub nowymi liniami, z obsługą opóźnień czasowych `sleep(milisekundy)`, np.:
+   ```text
+   187#01 02
+   sleep(100)
+   187#00
+   ```
+
+> **Inteligentne przykłady (Click-to-Clear):** Podczas konfiguracji nowego przycisku pola są automatycznie uzupełniane przykładową ramką. Wystarczy kliknąć myszą w pole, a przykład natychmiast zniknie, umożliwiając bezpośrednie wpisanie własnych danych bez konieczności zaznaczania i kasowania tekstu.
 
 Kliknięcie **`Usuń / Wyczyść`** w oknie edycji natychmiastowo resetuje przycisk do stanu nieużywanego (`+ Przypisz akcję (PPM)`).
 
@@ -166,10 +172,12 @@ W trybie CAN panel **Live Watch** działa jak profesjonalny analizator magistral
 * **Odpinanie:** Kliknięcie `✕` odepnie dany identyfikator, a sesyjny mechanizm zapamięta wybór i nie będzie go ponownie automatycznie przechwytywał.
 
 ### Przyciski Szybkich Akcji i Potwierdzenia ACK w CAN
-* W edytorze przycisków (`PPM na przycisk`) wybierz format payloadu **`CAN`**.
+* **Format TX zablokowany na CAN:** W profilu magistrali CAN pole wyboru formatu jest na stałe zablokowane na **`CAN`**, co chroni przed przypadkowym wysłaniem niesformatowanych ciągów znaków.
+* **Ramka informacji o składni:** W oknie edycji przycisku znajduje się dedykowany panel wyświetlający schemat składni (`ID#DANE`, `65A#R`, wzorce ACK `581#01*`) oraz opis działania wybranego trybu.
+* **Wypełnianie przykładową ramką (Click-to-Clear):** Każde pole nowego przycisku jest fabrycznie wypełnione poprawną ramką CAN (np. `187#01 02 03 04`, `187#01`, `581#01*`). Kliknięcie myszą w pole natychmiast czyści tekst przykładu, umożliwiając wpisanie własnego identyfikatora.
+* **Powiększone pole trybu `📜 Macro`:** Edytor sekwencji makra jest pełnowymiarowym polem tekstowym, w którym komendy można wpisywać wygodnie w kolejnych liniach lub rozdzielać średnikami (np. `187#01;\nsleep(100);\n187#00`).
 * Dla przycisków **`🔘 Toggle`** możesz zdefiniować potwierdzenie ACK dopasowywane do odebranej ramki CAN za pomocą wzorców z gwiazdką, np.:
   * `TX ON`: `187#01`, `ACK ON`: `581#01*`
   * `TX OFF`: `187#00`, `ACK OFF`: `581#00*`
   * `ACK ON`: `581#` (dopasowanie do dowolnej ramki z ID `0x581`).
 * Przycisk **`🔁 Trigger`** działa w trybie CAN jako cykliczny generator ramki co zadany interwał w milisekundach.
-* Przycisk **`📜 Macro`** pozwala wykonać sekwencję ramek z opóźnieniami, np. `187#01; sleep(100); 187#00`.

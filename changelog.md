@@ -2,6 +2,23 @@
 
 Wszystkie znaczące zmiany w tym projekcie będą udokumentowane w tym pliku.
 
+## [1.7.2] - 2026-10-16
+
+### Added
+- **Blokada formatu transmisji na CAN (`ButtonEditDialog`):**
+  - W trybie magistrali CAN (`is_can_mode == True`) pole wyboru "Format TX" jest na stałe zablokowane na wartość `CAN` z podpowiedzią (tooltip) informującą o aktywnym profilu CAN.
+- **Dedykowany panel informacyjny o składni CAN dla przycisków:**
+  - Wprowadzono estetyczną ramkę informacyjną z dynamicznym opisem składni (`ID#DANE`, `187#01 02`, `18FEF100#AABB`, `65A#R`, wzorce ACK `581#01*`) dostosowaną do aktualnie wybranego typu przycisku (`PUSH`, `TOGGLE`, `HOLD`, `TRIGGER`, `MACRO`).
+- **Inteligentne przykłady znikające po kliknięciu (`ClickToClearLineEdit` & `ClickToClearPlainTextEdit`):**
+  - Przy tworzeniu nowego przycisku w trybie CAN pola wejściowe są automatycznie wypełniane poprawnymi ramkami demonstracyjnymi (np. `187#01 02 03 04`, `187#01`, `581#01*`) w wyróżniającym się, pochyłym stylu.
+  - Kliknięcie myszą w pole (lub rozpoczęcie wpisywania tekstu) natychmiastowo czyści tekst przykładu, umożliwiając bezpośrednie pisanie bez konieczności ręcznego kasowania tekstu.
+- **Powiększone wieloliniowe pole sekwencji makra (`ClickToClearPlainTextEdit`):**
+  - Zastąpiono jednowierszowe pole `QLineEdit` w trybie `macro` pełnowymiarowym edytorem wieloliniowym z czcionką o stałej szerokości znaków (`Consolas`).
+  - Rozszerzono parser wątku `MacroRunner` o pełne wsparcie dla sekwencji rozdzielanych zarówno średnikami `;`, jak i nowymi liniami `\n`.
+
+### Changed
+- Zaktualizowano podręcznik [`INSTRUKCJA.md`](INSTRUKCJA.md) (Sekcja 4 i 10) oraz generator dokumentacji [`build_docs/build_docs.py`](build_docs/build_docs.py) (Slajd 4 i 12) o nowe możliwości edytora przycisków i makr.
+
 ## [1.7.1] - 2026-10-16
 
 ### Added

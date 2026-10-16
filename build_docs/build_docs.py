@@ -79,7 +79,7 @@ SLIDES_DATA = [
         ],
         "bullets": [
             "[1] Konfiguracja pod Prawym Przyciskiem Myszy (PPM): Kliknij PPM na dowolny przycisk po lewej stronie, aby otworzyć jego edytor.",
-            "[2] 5 Trybów Pracy: Push (jednorazowy), Toggle (przełącznik ON/OFF), Hold (wciśnięty/puszczony), Trigger (pętla czasowa ms), Macro (sekwencja z sleep).",
+            "[2] 5 Trybów Pracy: Push, Toggle (ACK), Hold, Trigger (pętla ms) oraz Macro (powiększone wieloliniowe pole sekwencji z sleep).",
             "[3] Sprzętowy ACK w trybie Toggle: Kolor przycisku zmieni się na Zielony (ON) lub Czerwony (OFF) TYLKO wtedy, gdy urządzenie odeśle ramkę potwierdzenia ACK!",
             "[4] Przycisk Usuń / Wyczyść: Natychmiastowo resetuje wybrany slot do stanu nieużywanego ('+ Przypisz akcję (PPM)')."
         ]
@@ -225,7 +225,7 @@ SLIDES_DATA = [
             "[1] Konfiguracja i Bitrate CAN: Wybór prędkości magistrali (10k - 1M) w profilu połączenia CANable slcan.",
             "[2] Sortowanie CAN ID i Czas Cyklu Delta_t: Wiersze Live Watch są automatycznie sortowane rosnąco po ID, z pomiarem odstępu czasowego Delta_t.",
             "[3] Błysk Zmienionych Bajtów: Zmienione wartości danych w ramce błyskają na złoto na 750 ms, pozwalając śledzić zmiany w locie.",
-            "[4] Składnia cansend i Przyciski CAN: Nadawanie ramek standardowych i rozszerzonych w formacie 'ID#DANE' oraz obsługa ACK w przyciskach."
+            "[4] Przyciski CAN i Click-to-Clear: Zablokowany format TX na CAN, dynamiczne przykłady znikające po kliknięciu i powiększone pole Makro."
         ]
     }
 ]
