@@ -2,6 +2,59 @@
 
 Wszystkie znaczące zmiany w tym projekcie będą udokumentowane w tym pliku.
 
+## [1.9.0] - 2026-10-19
+
+### Added
+- **Integracja magistrali CAN FD i protokołu candleLight (STM32G4 / WinUSB / gs_usb):**
+  - Nowy profil transportu `TRANSPORT_CANDLE` ("CAN / CAN FD – candleLight (WinUSB / gs_usb)") obok UART i CANable slcan.
+  - Automatyczne wykrywanie podłączonych adapterów candleLight przez `candle_api.list_device()` z przypisaniem portów w formacie `candle:DEV:CH` (np. `candle:0:0 — Candlelight 2.5 (SN: 2074326D554850142)`).
+  - Pełne wsparcie dla CAN FD: faza nominalna arbitrażu (10 kbps – 1 Mbps) oraz szybka faza danych (Data Bitrate: 500 kbps – 8 Mbps) z aktywnym przełączaniem prędkości BRS (Bit Rate Switch) i ładunkiem do 64 bajtów.
+  - Bezpieczne zamykanie magistrali (`bus.shutdown()`) oraz automatyczne odfiltrowywanie echa własnych ramek TX (`msg.is_rx == True`).
+- **Implementacja binarnej struktury TLV (`ot_app_msg_tlv`):**
+  - Klasa `OtAppMsgTlv` w `can_support.py` realizująca pakowanie i rozpakowywanie nagłówka Little-Endian `<BH` (1 bajt typ, 2 bajty długość pola value, ładunek do 61 bajtów w ramce 64B, opcjonalne dopełnienie zerami).
+  - Automatyczne dekodowanie struktur TLV w podglądzie ramek w konsoli głównej oraz w wierszach panelu Live Watch (`| TLV[0xA5, len=42]: "..."`).
+  - Szybka składnia poleceń z poziomu konsoli i przycisków: `TLV#<ID>#<TYPE>#<PAYLOAD>` (np. `TLV#321#0xA5#Hello CAN FD`) automatycznie pakująca ramkę CAN FD 64B z BRS.
+- **Kreator i Nadajnik Ramek CAN FD / TLV (`CanFdTxDialog`):**
+  - Dedykowany przycisk `📦 TLV / CAN FD` na dolnym pasku narzędziowym obok pola wprowadzania komend.
+  - Wizualny konfigurator ramki (CAN ID, flagi Extended 29-bit, CAN FD, BRS).
+  - Przełącznik trybu danych: pakowanie w strukturę binarną `ot_app_msg_tlv` lub surowy bufor Hex (do 64B).
+  - Nadawanie jednorazowe (`⚡ Wyślij raz`) oraz cykliczne (`🔁 Nadawaj cyklicznie`) z konfigurowalnym okresem (ms).
+  - Funkcja `📋 Kopiuj polecenie` do wklejenia w konsolę lub przypisania do przycisków szybkiej akcji.
+- **Konfiguracja Standardu Ramki CAN 2.0 / CAN FD w Przyciskach Szybkich Akcji (10 kafelków):**
+  - Nowe pole wyboru `Standard CAN` w `ButtonEditDialog` umożliwiające określenie per-przycisk standardu wysyłanej ramki: `Auto`, `Klasyczny CAN 2.0 (maks. 8B, bez BRS)`, `CAN FD z BRS (do 64B)`, `CAN FD bez BRS (do 64B)` oraz `Struktura TLV (ot_app_msg_tlv, 64B)`.
+  - Zestaw kafelków pomocnika szybkiego wstawiania szablonów: `🚗 Szablon CAN 2.0`, `⚡ Szablon CAN FD`, `📦 Szablon TLV` oraz konwerter `🔄 Konwertuj do trybu`.
+  - Walidacja na żywo i inteligentna naprawa (`⚡ Napraw automatycznie`) w oknie edycji przycisku (np. automatyczne przełączenie na CAN FD przy danych > 8B w trybie klasycznym).
+  - Dynamiczne dymki tooltip na przyciskach odzwierciedlające wybrany standard ramki (`Typ: PUSH (CAN 2.0)`, `Typ: PUSH (CAN FD+BRS)`).
+- **Kontekstowe dopasowanie UI w zależności od trybu transportu (`Serial` vs `CANable slcan` vs `candleLight`):**
+  - W trybie `Serial`: całkowite ukrycie i wyłączenie opcji CAN (przycisków szablonów, formatu CAN w edycji przycisków, kreatora TLV i ustawień bitrate).
+  - W trybie `CANable slcan`: ścisła blokada do standardu Klasyczny CAN 2.0 (maksymalnie 8 bajtów danych, brak opcji CAN FD i BRS w przyciskach, ukrycie przycisku `📦 TLV / CAN FD`).
+  - W trybie `candleLight`: pełne wsparcie dla CAN 2.0 oraz CAN FD i TLV (odblokowany przycisk `📦 TLV / CAN FD`, wszystkie szablony i tryby w edycji przycisków).
+- **Skrypty weryfikacyjne i testowe niskiego poziomu w katalogu `tests/`:**
+  - `tests/step1_usb_check.py` – weryfikacja backendu libusb-1.0 i deskryptorów USB candleLight (1D50:606F),
+  - `tests/step2_classic_can.py` – test klasycznego CAN 2.0 (500 kbps, 8 bajtów),
+  - `tests/step3_can_fd.py` – test CAN FD (500k / 2000k BRS) oraz pakowania struktury `ot_app_msg_tlv`.
+- **Rozszerzenie Generatora Dokumentacji i Prezentacji do 16 Slajdów (`build_docs/`):**
+  - Wdrożono dedykowane slajdy 14, 15 i 16 ze skalibrowanymi wektorowymi adnotacjami dla zrzutów: `Zrzut_edytor konfiguracji.png`, `Zrzut_edytor_konfiguracji_przycisku_push.png` oraz `zrzut_can_fd_tlv.png`.
+  - Zaktualizowano instrukcję PDF (`Serial_Commander_Instrukcja.pdf`) oraz prezentację PowerPoint (`Serial_Commander_Prezentacja.pptx`).
+
+### Changed
+- Podniesiono wersję aplikacji do `1.9.0` (`APP_VERSION`).
+- Zaktualizowano okno dialogowe konfiguracji profilu (`ConfigEditDialog`) o wybór interfejsu candleLight, przełącznik CAN FD oraz listę prędkości Data Bitrate.
+- Przystosowano pasek narzędziowy karty (`SerialTab`) do wyświetlania prędkości nominalnej `Nominal:` oraz dynamicznych podpowiedzi składni CAN FD.
+
+### Fixed
+- **Naprawa błędu odbioru ramek CAN / CAN FD w Serial Commander (brak odbioru RX przy sprawnym TX):**
+  - Wyeliminowano krytyczny błąd w pętli odczytu `CanWorker.run()`: warunek `elif getattr(msg, 'is_rx', True):` odrzucał odebrane ramki z fizycznej magistrali w backendzie `candle`, gdzie `frame.frame_type.rx` domyślnie przyjmowało wartość `False`. Zmodyfikowano warunek, aby odrzucał wyłącznie potwierdzenia echo z kontrolera `gs_usb` (`msg.echo_id is not None and msg.echo_id != 0xFFFFFFFF`), przywracając pełny odbiór ramek fizycznych.
+  - Zmieniono domyślną wartość `watch_print_in_console` z `False` na `True`: automatyczne przypinanie `can_watch_auto: True` przechwytywało każde nowe CAN ID i ukrywało je w głównej konsoli logów. Od teraz odebrane ramki są zawsze widoczne strumieniowo w konsoli oraz w wierszu Live Watch.
+  - Zaktualizowano powiązanie w `ConfigEditDialog`: odznaczenie `Włącz CAN FD` blokuje i wyszarza pola Data Bitrate oraz Sample Point, jednoznacznie informując o pracy w czystym standardzie Klasycznego CAN 2.0.
+  - Skorygowano profil `cfg/CAN.json`: ustawiono port `candle:0:0`, standardowy Sample Point `80.0%`, Data Bitrate `2000000` (2M) oraz `watch_print_in_console: true`.
+- **Rozwiązano problem z transmisją CAN FD 500k / 2 Mbps (Sample Point CiA 601-1):**
+  - Wyjaśniono przyczynę awarii przy 2 Mbps: biblioteka `python-can-candle` domyślnie żądała punktu próbkowania `87.5%`, co przy zegarze 160 MHz i 2 Mbps ustawiało `tseg2 = 2` (zaledwie 62.5 ns) oraz powodowało przekroczenie okna TDC i błędy bitowe na snifferach oczekujących standardowego 80.0%. Przy 4 Mbps biblioteka automatycznie przełączała się na 80.0%, a przy 1 Mbps bit trwał 1000 ns, stąd obie te prędkości działały poprawnie.
+  - Skonfigurowano domyślny punkt próbkowania na **`80.0%`** (zgodnie ze standardem CiA 601-1 dla CAN FD) w `can_support.py` (`CanWorker`) oraz w skrypcie `tests/step3_can_fd.py`.
+  - Dodano selektor punktu próbkowania (`Sample Point (CiA 601-1)`) w oknie edycji konfiguracji profilu (`ConfigEditDialog`).
+  - Rozwiązano problem z ponownym otwarciem adaptera (`RuntimeError: Cannot open device`) poprzez bezpośrednie zamykanie `device.close()` w `CanWorker._safe_shutdown()`.
+  - Usunięto błąd `AttributeError: 'SerialTab' object has no attribute 'config'` przy łączeniu (`toggle_connection`), zastępując odwołanie właściwym `self.app_config`.
+
 ## [1.8.0] - 2026-10-16
 
 ### Added
