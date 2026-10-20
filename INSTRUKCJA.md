@@ -600,6 +600,12 @@ Przed uruchomieniem aplikacji okienkowej Serial Commander warto uruchomić trzy 
 5. Kliknij **`Zapisz Ustawienia`**.
 
 6. Na liście portów rozwiń listę i wybierz wykryte urządzenie candleLight (np. `candle:0:0 — Candlelight 2.5 (SN: ...)`).
+   > [!NOTE]
+   > **Rozróżnianie urządzeń wolnych i zajętych (Współdzielenie ze snifferami/HUD ECU Hacker):**
+   > Sterownik WinUSB wymaga wyłączności na urządzenie. Jeśli z adaptera candleLight korzysta równolegle inna aplikacja (np. HUD ECU Hacker, BusMaster czy skrypt w Pythonie):
+   > * Port **nie zniknie** z programu – pojawi się na liście jako **`candle:0:0 🔒`** z ciemnoczerwonym podświetleniem i statusem `[ZAJĘTY przez inny program]`.
+   > * W tytule karty pojawi się symbol kłódki: `🔒 candle:0:0 · CAN`.
+   > * Próba kliknięcia *Połącz* wyświetli czytelny komunikat przypominający o konieczności rozłączenia w zewnętrznym oknie. Po zwolnieniu urządzenia i kliknięciu *Odśwież (⟳)* port natychmiast wraca do stanu gotowości (`🟢 Wolny`).
 
 7. Kliknij **`Połącz`**.
 

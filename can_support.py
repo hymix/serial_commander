@@ -50,6 +50,20 @@ except Exception:
     CandleBus = None
     CANDLE_BUS_AVAILABLE = False
 
+try:
+    import libusb_package
+    import usb.core
+    import usb.util
+    USB_LIB_AVAILABLE = True
+except Exception:
+    libusb_package = None
+    USB_LIB_AVAILABLE = False
+
+CANDLE_KNOWN_VID_PIDS = [
+    (0x1D50, 0x606F),  # OpenMoko / Geschwister Schneider / candleLight
+    (0x1D50, 0x606E),  # Alternatywny PID gs_usb
+]
+
 
 # ==========================================
 # STAŁE I TYPY TRANSPORTU
@@ -115,27 +129,71 @@ def format_bitrate_label(bitrate: int) -> str:
     return f"{bitrate / 1000:.1f}k"
 
 
-def list_candle_devices() -> List[Tuple[str, str]]:
+class CandleDeviceInfo(tuple):
     """
-    Zwraca listę podłączonych urządzeń candleLight w postaci [(ch_id, display_label), ...].
-    np. [('candle:0:0', 'candle:0:0 — Candlelight 2.5 (SN: 2074326D554850142)')]
+    Krotka (ch_id, display_label) z metadanymi stanu urządzenia candleLight.
+    Dzięki dziedziczeniu z tuple zachowuje 100% zgodności wstecznej z:
+      for ch_id, label in list_candle_devices():
+    jednocześnie udostępniając atrybut .is_busy (True, gdy inne oprogramowanie
+    zajmuje urządzenie na wyłączność przez WinUSB).
     """
-    if not CANDLE_API_AVAILABLE or candle_api is None:
-        return []
-    try:
-        devices = candle_api.list_device()
-        result: List[Tuple[str, str]] = []
-        for dev_idx, dev in enumerate(devices):
-            sn = getattr(dev, "serial_number", "") or f"DEV{dev_idx}"
-            prod = getattr(dev, "product", "") or "candleLight"
-            ch_count = getattr(dev, "channel_count", 1) or 1
-            for ch_idx in range(ch_count):
-                ch_id = f"candle:{dev_idx}:{ch_idx}"
-                label = f"{ch_id} — {prod} (SN: {sn})"
-                result.append((ch_id, label))
-        return result
-    except Exception:
-        return []
+    def __new__(cls, ch_id: str, label: str, is_busy: bool = False, sn: str = "", prod: str = ""):
+        inst = super().__new__(cls, (ch_id, label))
+        inst.ch_id = ch_id
+        inst.label = label
+        inst.is_busy = bool(is_busy)
+        inst.sn = sn
+        inst.prod = prod
+        return inst
+
+
+def list_candle_devices() -> List[CandleDeviceInfo]:
+    """
+    Zwraca listę podłączonych urządzeń candleLight w postaci obiektów CandleDeviceInfo (ch_id, display_label).
+    Automatycznie rozróżnia:
+      * Urządzenia wolne (is_busy=False) – gotowe do połączenia,
+      * Urządzenia zajęte (is_busy=True) – fizycznie wykryte na szynie USB (VID 1D50),
+        ale zablokowane na wyłączność przez inny program (np. HUD ECU Hacker, BusMaster).
+    """
+    result: List[CandleDeviceInfo] = []
+    free_dev_count = 0
+
+    # 1. Wykrywanie dostępnych (wolnych) urządzeń za pośrednictwem candle_api
+    if CANDLE_API_AVAILABLE and candle_api is not None:
+        try:
+            devices = candle_api.list_device()
+            for dev_idx, dev in enumerate(devices):
+                sn = getattr(dev, "serial_number", "") or f"DEV{dev_idx}"
+                prod = getattr(dev, "product", "") or "candleLight"
+                ch_count = getattr(dev, "channel_count", 1) or 1
+                free_dev_count += 1
+                for ch_idx in range(ch_count):
+                    ch_id = f"candle:{dev_idx}:{ch_idx}"
+                    label = f"{ch_id} — {prod} (SN: {sn})"
+                    result.append(CandleDeviceInfo(ch_id, label, is_busy=False, sn=sn, prod=prod))
+        except Exception:
+            pass
+
+    # 2. Skan fizycznych urządzeń USB za pomocą libusb/pyusb w celu wykrycia urządzeń zajętych
+    if USB_LIB_AVAILABLE and libusb_package is not None:
+        try:
+            raw_devices = []
+            for vid, pid in CANDLE_KNOWN_VID_PIDS:
+                for d in libusb_package.find(find_all=True, idVendor=vid, idProduct=pid):
+                    raw_devices.append(d)
+
+            # Jeśli fizycznych urządzeń USB jest więcej niż tych pomyślnie otwartych przez candle_api,
+            # to brakujące urządzenia są zajęte przez inny proces na poziomie WinUSB
+            busy_count = max(0, len(raw_devices) - free_dev_count)
+            for b_idx in range(busy_count):
+                busy_dev_idx = free_dev_count + b_idx
+                ch_id = f"candle:{busy_dev_idx}:0"
+                label = f"{ch_id} — candleLight (🔒 ZAJĘTY przez inny program)"
+                result.append(CandleDeviceInfo(ch_id, label, is_busy=True, prod="candleLight (Zajęty)"))
+        except Exception:
+            pass
+
+    return result
 
 
 class CanFrameError(ValueError):
@@ -652,7 +710,13 @@ class CanWorker(QThread):
                     listen_only=self.listen_only,
                 )
         except Exception as e:
-            self.error_occurred.emit(f"Błąd otwarcia adaptera CAN ({self.interface}) na {self.port}: {e}")
+            err_str = str(e)
+            if any(term in err_str.lower() for term in ("access denied", "cannot open device", "permission", "busy")):
+                self.error_occurred.emit(
+                    f"Błąd otwarcia adaptera {self.interface} ({self.port}): Urządzenie jest zablokowane lub używane przez inną aplikację (Access Denied / Busy)."
+                )
+            else:
+                self.error_occurred.emit(f"Błąd otwarcia adaptera CAN ({self.interface}) na {self.port}: {e}")
             self.connection_status.emit(False)
             self._safe_shutdown()
             return

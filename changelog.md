@@ -43,6 +43,11 @@ Wszystkie znaczące zmiany w tym projekcie będą udokumentowane w tym pliku.
 - Przystosowano pasek narzędziowy karty (`SerialTab`) do wyświetlania prędkości nominalnej `Nominal:` oraz dynamicznych podpowiedzi składni CAN FD.
 
 ### Fixed
+- **Rozpoznawanie i obsługa stanu zajętości interfejsu candleLight przez inną aplikację:**
+  - Rozwiązano problem znikającego portu candleLight z listy rozwijanej (`PortComboBox`), gdy urządzenie USB było otwarte na wyłączność przez inny proces (np. HUD ECU Hacker, BusMaster, inny terminal lub proces w tle).
+  - Wprowadzono klasę `CandleDeviceInfo(tuple)` w `can_support.py`, która łączy szybki odczyt API z niskopoziomowym skanem fizycznej obecności magistrali USB (`libusb_package` / `pyusb` dla VID 1D50).
+  - Urządzenia zajęte nie znikają już z interfejsu, lecz są wyraźnie oznaczane jako `candle:0:0 🔒` (bordowe tło `#3b1818`, czerwony tekst `#ff8787` w rozwijanej liście portów) oraz symbolem kłódki w nagłówku karty (`🔒 candle:0:0 · CAN`).
+  - Próba kliknięcia `Połącz` na zajętym urządzeniu wyświetla natychmiast czytelny dialog ostrzegawczy `QMessageBox.warning` z instrukcją zwolnienia urządzenia w zewnętrznym programie, zapobiegając błędom `RuntimeError / Access Denied` i blokowaniu wątków.
 - **Naprawa błędu odbioru ramek CAN / CAN FD w Serial Commander (brak odbioru RX przy sprawnym TX):**
   - Wyeliminowano krytyczny błąd w pętli odczytu `CanWorker.run()`: warunek `elif getattr(msg, 'is_rx', True):` odrzucał odebrane ramki z fizycznej magistrali w backendzie `candle`, gdzie `frame.frame_type.rx` domyślnie przyjmowało wartość `False`. Zmodyfikowano warunek, aby odrzucał wyłącznie potwierdzenia echo z kontrolera `gs_usb` (`msg.echo_id is not None and msg.echo_id != 0xFFFFFFFF`), przywracając pełny odbiór ramek fizycznych.
   - Zmieniono domyślną wartość `watch_print_in_console` z `False` na `True`: automatyczne przypinanie `can_watch_auto: True` przechwytywało każde nowe CAN ID i ukrywało je w głównej konsoli logów. Od teraz odebrane ramki są zawsze widoczne strumieniowo w konsoli oraz w wierszu Live Watch.

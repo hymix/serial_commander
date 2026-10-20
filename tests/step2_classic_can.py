@@ -2,7 +2,7 @@
 Author: Jan Lukaszewicz j.lukaszewicz@lincor.pl
 Date: 2026-10-19 15:45:59
 LastEditors: Jan Lukaszewicz j.lukaszewicz@lincor.pl
-LastEditTime: 2026-10-19 15:49:07
+LastEditTime: 2026-10-20 13:15:21
 FilePath: \serial_commander\tests\step2_classic_can.py
 Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
 '''

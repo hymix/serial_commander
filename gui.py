@@ -299,10 +299,10 @@ def populate_color_combo(combo):
 # CUSTOMOWE KONTROLKI (PortComboBox, CommandLineEdit, LiveWatchRowWidget)
 # ==========================================
 class PortComboBox(QComboBox):
-    """W spoczynku wyświetla tylko krótki kod portu (np. COM20), a po rozwinięciu pełny opis urządzenia."""
+    """W spoczynku wyświetla tylko krótki kod portu (np. COM20 lub candle:0:0), a po rozwinięciu pełny opis urządzenia ze statusem dostępności."""
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedWidth(82)
+        self.setFixedWidth(92)
         self.new_ports = set()
 
     def set_new_ports(self, new_ports: set[str]):
@@ -312,7 +312,12 @@ class PortComboBox(QComboBox):
     def _apply_item_styles(self):
         for i in range(self.count()):
             dev = self.itemData(i, Qt.ItemDataRole.UserRole)
-            if dev in self.new_ports:
+            is_busy = bool(self.itemData(i, Qt.ItemDataRole.UserRole + 2))
+            if is_busy:
+                # Ostrzeżenie: urządzenie zajęte przez inny proces
+                self.setItemData(i, QColor("#3b1818"), Qt.ItemDataRole.BackgroundRole)
+                self.setItemData(i, QColor("#ff8787"), Qt.ItemDataRole.ForegroundRole)
+            elif dev in self.new_ports:
                 self.setItemData(i, QColor("#1b4332"), Qt.ItemDataRole.BackgroundRole)
                 self.setItemData(i, QColor("#8ce99a"), Qt.ItemDataRole.ForegroundRole)
             else:
@@ -323,20 +328,27 @@ class PortComboBox(QComboBox):
         for i in range(self.count()):
             dev = self.itemData(i, Qt.ItemDataRole.UserRole)
             full_desc = self.itemData(i, Qt.ItemDataRole.UserRole + 1)
+            is_busy = bool(self.itemData(i, Qt.ItemDataRole.UserRole + 2))
             if full_desc:
-                if dev in self.new_ports:
+                if is_busy:
+                    self.setItemText(i, f"🔒 {full_desc}")
+                elif dev in self.new_ports:
                     self.setItemText(i, f"✨ {full_desc}  [NOWY]")
                 else:
                     self.setItemText(i, full_desc)
-        self.view().setMinimumWidth(340)
+        self.view().setMinimumWidth(380)
         super().showPopup()
 
     def hidePopup(self):
         super().hidePopup()
         for i in range(self.count()):
             short_dev = self.itemData(i, Qt.ItemDataRole.UserRole)
+            is_busy = bool(self.itemData(i, Qt.ItemDataRole.UserRole + 2))
             if short_dev:
-                self.setItemText(i, short_dev)
+                if is_busy:
+                    self.setItemText(i, f"{short_dev} 🔒")
+                else:
+                    self.setItemText(i, short_dev)
 
 
 class CommandLineEdit(QLineEdit):
@@ -3509,7 +3521,9 @@ class SerialTab(QWidget):
 
     def update_header_title(self):
         connected = bool(self.worker and self.worker.is_running)
-        dot = "🟢" if connected else "⚪"
+        idx = self.port_combo.currentIndex()
+        is_busy = bool(self.port_combo.itemData(idx, Qt.ItemDataRole.UserRole + 2)) if idx >= 0 else False
+        dot = "🟢" if connected else ("🔒" if is_busy else "⚪")
         port = self.get_selected_port_device() or "Brak portu"
         cfg = self.combo_cfg.currentText() or "default.json"
         side_label = "LEWA" if self.panel_side == "left" else "PRAWA"
@@ -3836,7 +3850,9 @@ class SerialTab(QWidget):
     def get_tab_title(self):
         self.update_header_title()
         connected = bool(self.worker and self.worker.is_running)
-        dot = "🟢" if connected else "⚪"
+        idx = self.port_combo.currentIndex()
+        is_busy = bool(self.port_combo.itemData(idx, Qt.ItemDataRole.UserRole + 2)) if idx >= 0 else False
+        dot = "🟢" if connected else ("🔒" if is_busy else "⚪")
         port = self.get_selected_port_device() or "Brak"
         cfg = self.combo_cfg.currentText() or "default.json"
         is_can = is_can_transport(self.app_config.get("transport"))
@@ -4305,14 +4321,24 @@ class SerialTab(QWidget):
         trans = self.app_config.get("transport") if self.app_config else None
         if trans == TRANSPORT_CANDLE:
             candle_devs = list_candle_devices()
-            current_devices = {ch_id for ch_id, _ in candle_devs}
+            current_devices = {item[0] for item in candle_devs}
             new_ports = set()
-            for ch_id, label in candle_devs:
-                self.port_combo.addItem(ch_id)
+            busy_ports = []
+            for item in candle_devs:
+                ch_id, label = item[0], item[1]
+                is_busy = getattr(item, "is_busy", False)
+                if is_busy:
+                    busy_ports.append(ch_id)
+                disp_text = f"{ch_id} 🔒" if is_busy else ch_id
+                self.port_combo.addItem(disp_text)
                 idx = self.port_combo.count() - 1
                 self.port_combo.setItemData(idx, ch_id, Qt.ItemDataRole.UserRole)
                 self.port_combo.setItemData(idx, label, Qt.ItemDataRole.UserRole + 1)
-                self.port_combo.setItemData(idx, label, Qt.ItemDataRole.ToolTipRole)
+                self.port_combo.setItemData(idx, is_busy, Qt.ItemDataRole.UserRole + 2)
+                tooltip = f"{label}\nUrządzenie jest zajęte przez inną aplikację (brak dostępu WinUSB / Access Denied)." if is_busy else label
+                self.port_combo.setItemData(idx, tooltip, Qt.ItemDataRole.ToolTipRole)
+
+            self.port_combo._apply_item_styles()
 
             saved_port = self.app_config.get("port") if self.app_config else None
             if saved_port:
@@ -4322,8 +4348,13 @@ class SerialTab(QWidget):
                         break
             self.port_combo.blockSignals(False)
             
+            free_count = len(candle_devs) - len(busy_ports)
             if not candle_devs:
                 self.log_info("Nie znaleziono żadnych urządzeń candleLight (WinUSB).")
+            elif busy_ports and free_count == 0:
+                self.log_info(f"⚠️ Wykryto interfejs candleLight ({', '.join(busy_ports)}), ale jest ZAJĘTY przez inną aplikację (Access Denied).")
+            elif busy_ports:
+                self.log_info(f"Znaleziono interfejsy candleLight: {free_count} wolny(ch), {len(busy_ports)} zajęty(ch) przez inny program.")
             else:
                 self.log_info(f"Znaleziono {len(candle_devs)} interfejs(ów) candleLight.")
             self.update_header_title()
@@ -4444,6 +4475,19 @@ class SerialTab(QWidget):
                         f"Tryb CAN wymaga biblioteki python-can.\n{CAN_IMPORT_ERROR}\n\nZainstaluj ją poleceniem:\npip install python-can"
                     )
                     return
+
+                if trans == TRANSPORT_CANDLE:
+                    idx = self.port_combo.currentIndex()
+                    is_busy = bool(self.port_combo.itemData(idx, Qt.ItemDataRole.UserRole + 2)) if idx >= 0 else False
+                    if is_busy:
+                        QMessageBox.warning(
+                            self, "Interfejs zajęty",
+                            f"Urządzenie candleLight ({selected_port}) jest obecnie używane przez inną aplikację "
+                            f"(np. HUD ECU Hacker, inny terminal lub proces w tle) i nie zezwala na współdzielenie dostępu WinUSB.\n\n"
+                            f"Zamknij połączenie w tamtym programie, kliknij 'Odśwież' (⟳) i spróbuj połączyć się ponownie."
+                        )
+                        self.log_info(f"❌ Połączenie anulowane: interfejs {selected_port} jest zajęty przez inną aplikację.")
+                        return
 
                 try:
                     bitrate_data = self.baud_combo.currentData()
