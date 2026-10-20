@@ -23,14 +23,16 @@ from PyQt6.QtCore import QThread, pyqtSignal, Qt, QSize, QTimer
 from PyQt6.QtGui import QIcon, QPixmap, QColor, QTextDocument, QTextCursor, QShortcut, QKeySequence, QAction, QFont
 
 from can_support import (CAN_AVAILABLE, CAN_IMPORT_ERROR, CAN_BITRATES, DEFAULT_CAN_BITRATE,
-                         TRANSPORT_SERIAL, TRANSPORT_SLCAN, TRANSPORTS, TRANSPORT_LABELS,
+                         CAN_DATA_BITRATES, DEFAULT_CAN_DATA_BITRATE,
+                         TRANSPORT_SERIAL, TRANSPORT_SLCAN, TRANSPORT_CANDLE, TRANSPORTS, TRANSPORT_LABELS,
+                         is_can_transport, list_candle_devices, OtAppMsgTlv,
                          CanFrameError, CanWorker, parse_can_frame, normalize_can_ack_pattern,
                          normalize_can_id_text, extract_can_id_from_line, can_id_sort_key,
-                         format_bitrate_label)
+                         format_bitrate_label, CAN_MODE_AUTO, CAN_MODE_CLASSIC, CAN_MODE_FD_BRS, CAN_MODE_FD_NO_BRS, CAN_MODE_TLV, CAN_FRAME_MODES, convert_can_frame_text, TLV_HEADER_SIZE)
 
 CFG_DIR = "cfg"
 APP_SETTINGS_FILE = os.path.join(CFG_DIR, "app_settings.json")
-APP_VERSION = "1.8.0"
+APP_VERSION = "1.9.0"
 
 # ==========================================
 # GLOBALNY MOTYW CIEMNY (QSS)
@@ -181,23 +183,28 @@ def get_default_button(btn_id):
         "rx_pattern": "",
         "timeout": 1000,
         "steps": [],
-        "current_step": 0
+        "current_step": 0,
+        "can_mode": CAN_MODE_AUTO
     }
 
 def get_default_config():
     config = {
-        "transport": TRANSPORT_SERIAL,      # "serial" (UART) | "slcan" (CANable)
+        "transport": TRANSPORT_SERIAL,      # "serial" (UART) | "slcan" (CANable) | "candle" (candleLight CAN FD)
         "port": "",
         "baudrate": 115200,
         "mode": "ASCII",
         "eol": "CRLF",
         "can_bitrate": DEFAULT_CAN_BITRATE,
+        "can_data_bitrate": DEFAULT_CAN_DATA_BITRATE,
+        "can_sample_point": 80.0,
+        "can_data_sample_point": 80.0,
+        "can_fd_enabled": True,
         "can_listen_only": False,
         "can_watch_auto": True,
         "filters": [],
         "parsers": [],
         "watch_patterns": [],
-        "watch_print_in_console": False,
+        "watch_print_in_console": True,
         "buttons": [get_default_button(i + 1) for i in range(10)]
     }
     return config
@@ -216,7 +223,7 @@ def load_config(filepath):
                 if "watch_patterns" not in config:
                     config["watch_patterns"] = []
                 if "watch_print_in_console" not in config:
-                    config["watch_print_in_console"] = False
+                    config["watch_print_in_console"] = True
                 if "eol" not in config:
                     config["eol"] = "CRLF"
                 if config.get("transport") not in TRANSPORTS:
@@ -228,6 +235,19 @@ def load_config(filepath):
                         config["can_bitrate"] = int(config["can_bitrate"])
                 except (TypeError, ValueError):
                     config["can_bitrate"] = DEFAULT_CAN_BITRATE
+                try:
+                    if int(config.get("can_data_bitrate", DEFAULT_CAN_DATA_BITRATE)) not in CAN_DATA_BITRATES:
+                        config["can_data_bitrate"] = DEFAULT_CAN_DATA_BITRATE
+                    else:
+                        config["can_data_bitrate"] = int(config["can_data_bitrate"])
+                except (TypeError, ValueError):
+                    config["can_data_bitrate"] = DEFAULT_CAN_DATA_BITRATE
+                if "can_sample_point" not in config:
+                    config["can_sample_point"] = 80.0
+                if "can_data_sample_point" not in config:
+                    config["can_data_sample_point"] = 80.0
+                if "can_fd_enabled" not in config:
+                    config["can_fd_enabled"] = True
                 if "can_listen_only" not in config:
                     config["can_listen_only"] = False
                 if "can_watch_auto" not in config:
@@ -279,10 +299,10 @@ def populate_color_combo(combo):
 # CUSTOMOWE KONTROLKI (PortComboBox, CommandLineEdit, LiveWatchRowWidget)
 # ==========================================
 class PortComboBox(QComboBox):
-    """W spoczynku wyświetla tylko krótki kod portu (np. COM20), a po rozwinięciu pełny opis urządzenia."""
+    """W spoczynku wyświetla tylko krótki kod portu (np. COM20 lub candle:0:0), a po rozwinięciu pełny opis urządzenia ze statusem dostępności."""
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedWidth(82)
+        self.setFixedWidth(92)
         self.new_ports = set()
 
     def set_new_ports(self, new_ports: set[str]):
@@ -292,7 +312,12 @@ class PortComboBox(QComboBox):
     def _apply_item_styles(self):
         for i in range(self.count()):
             dev = self.itemData(i, Qt.ItemDataRole.UserRole)
-            if dev in self.new_ports:
+            is_busy = bool(self.itemData(i, Qt.ItemDataRole.UserRole + 2))
+            if is_busy:
+                # Ostrzeżenie: urządzenie zajęte przez inny proces
+                self.setItemData(i, QColor("#3b1818"), Qt.ItemDataRole.BackgroundRole)
+                self.setItemData(i, QColor("#ff8787"), Qt.ItemDataRole.ForegroundRole)
+            elif dev in self.new_ports:
                 self.setItemData(i, QColor("#1b4332"), Qt.ItemDataRole.BackgroundRole)
                 self.setItemData(i, QColor("#8ce99a"), Qt.ItemDataRole.ForegroundRole)
             else:
@@ -303,20 +328,27 @@ class PortComboBox(QComboBox):
         for i in range(self.count()):
             dev = self.itemData(i, Qt.ItemDataRole.UserRole)
             full_desc = self.itemData(i, Qt.ItemDataRole.UserRole + 1)
+            is_busy = bool(self.itemData(i, Qt.ItemDataRole.UserRole + 2))
             if full_desc:
-                if dev in self.new_ports:
+                if is_busy:
+                    self.setItemText(i, f"🔒 {full_desc}")
+                elif dev in self.new_ports:
                     self.setItemText(i, f"✨ {full_desc}  [NOWY]")
                 else:
                     self.setItemText(i, full_desc)
-        self.view().setMinimumWidth(340)
+        self.view().setMinimumWidth(380)
         super().showPopup()
 
     def hidePopup(self):
         super().hidePopup()
         for i in range(self.count()):
             short_dev = self.itemData(i, Qt.ItemDataRole.UserRole)
+            is_busy = bool(self.itemData(i, Qt.ItemDataRole.UserRole + 2))
             if short_dev:
-                self.setItemText(i, short_dev)
+                if is_busy:
+                    self.setItemText(i, f"{short_dev} 🔒")
+                else:
+                    self.setItemText(i, short_dev)
 
 
 class CommandLineEdit(QLineEdit):
@@ -622,14 +654,24 @@ class ClickToClearPlainTextEdit(QPlainTextEdit):
 
 
 class ButtonEditDialog(QDialog):
-    def __init__(self, btn_data, parent=None, is_can_mode: bool = False):
+    def __init__(self, btn_data, parent=None, is_can_mode: bool = False,
+                 transport: str = TRANSPORT_SERIAL, can_fd_enabled: bool = True):
         super().__init__(parent)
         self.setWindowTitle(f"Edytuj {btn_data.get('name', 'Przycisk')}")
         self.btn_data = btn_data
-        self.is_can_mode = is_can_mode
+        
+        # Ustalenie transportu i flag trybu CAN / CAN FD
+        if transport == TRANSPORT_SERIAL and is_can_mode:
+            transport = TRANSPORT_SLCAN
+        self.transport = str(transport)
+        self.is_can_mode = is_can_transport(self.transport) or bool(is_can_mode)
+        # Tryb CAN FD jest dostępny WYŁĄCZNIE dla adaptera candleLight z włączoną obsługą FD:
+        self.can_fd_capable = (self.transport == TRANSPORT_CANDLE) and bool(can_fd_enabled)
+        
         self.delete_requested = False
         self.autofix_target = None
         self.autofix_replacement = None
+        self.autofix_action = None
         
         self.resize(570, 650)
         self.main_layout = QVBoxLayout(self)
@@ -657,16 +699,46 @@ class ButtonEditDialog(QDialog):
         top_layout.addRow("Typ:", self.combo_type)
         
         self.combo_payload_type = QComboBox()
-        self.combo_payload_type.addItems(["ASCII", "HEX", "CAN"])
-        
         if self.is_can_mode:
+            self.combo_payload_type.addItem("CAN")
             self.combo_payload_type.setCurrentText("CAN")
             self.combo_payload_type.setEnabled(False)
-            self.combo_payload_type.setToolTip("W profilu trybu CAN format transmisji przycisków jest na stałe zablokowany na CAN.")
+            if self.can_fd_capable:
+                self.combo_payload_type.setToolTip("W profilu CAN / CAN FD (candleLight) format przycisków jest zablokowany na CAN.")
+            else:
+                self.combo_payload_type.setToolTip("W profilu CANable (slcan) format przycisków jest zablokowany na CAN (wyłącznie klasyczny CAN 2.0).")
         else:
-            self.combo_payload_type.setCurrentText(btn_data.get("payload_type", "ASCII"))
+            self.combo_payload_type.addItems(["ASCII", "HEX"])
+            cur_p = btn_data.get("payload_type", "ASCII")
+            self.combo_payload_type.setCurrentText(cur_p if cur_p in ("ASCII", "HEX") else "ASCII")
+            self.combo_payload_type.setToolTip("Format transmisji portu szeregowego: ASCII (tekst) lub HEX (bajty binarne).")
             
         top_layout.addRow("Format TX:", self.combo_payload_type)
+
+        self.lbl_can_mode = QLabel("Standard CAN:")
+        self.combo_can_mode = QComboBox()
+        if self.can_fd_capable:
+            # Dla candleLight CAN FD: pełne wsparcie formatów CAN 2.0 i CAN FD
+            for mode_key, mode_title in CAN_FRAME_MODES:
+                self.combo_can_mode.addItem(mode_title, mode_key)
+            self.combo_can_mode.setToolTip("Wybierz standard ramki: Klasyczny CAN 2.0 (maks. 8B), CAN FD z BRS (do 64B), CAN FD bez BRS lub TLV.")
+        else:
+            # Dla CANable (slcan): WYŁĄCZNIE klasyczny standard CAN 2.0 (maks. 8B)
+            self.combo_can_mode.addItem("Klasyczny CAN 2.0 (maks. 8B, standard)", CAN_MODE_CLASSIC)
+            self.combo_can_mode.addItem("Auto (ze składni, maks. 8B)", CAN_MODE_AUTO)
+            self.combo_can_mode.setToolTip("Adapter CANable (slcan) obsługuje wyłącznie standard Klasyczny CAN 2.0 (maks. 8B). Tryb CAN FD jest dostępny tylko dla adaptera candleLight.")
+
+        cur_can_mode = btn_data.get("can_mode", CAN_MODE_AUTO if self.can_fd_capable else CAN_MODE_CLASSIC)
+        idx_can = self.combo_can_mode.findData(cur_can_mode)
+        if idx_can >= 0:
+            self.combo_can_mode.setCurrentIndex(idx_can)
+        else:
+            self.combo_can_mode.setCurrentIndex(0)
+
+        self.lbl_can_mode.setVisible(self.is_can_mode)
+        self.combo_can_mode.setVisible(self.is_can_mode)
+        self.combo_can_mode.currentIndexChanged.connect(lambda *args: self.validate_and_preview())
+        top_layout.addRow(self.lbl_can_mode, self.combo_can_mode)
         self.main_layout.addLayout(top_layout)
         
         # Ramka z informacją o składni i działaniu wybranego typu przycisku
@@ -765,6 +837,55 @@ class ButtonEditDialog(QDialog):
         chips_layout.addWidget(btn_chip_5)
         chips_layout.addStretch()
         helper_layout.addLayout(chips_layout)
+
+        self.can_chips_widget = QWidget()
+        can_chips_layout = QHBoxLayout(self.can_chips_widget)
+        can_chips_layout.setContentsMargins(0, 2, 0, 0)
+        can_chips_layout.setSpacing(4)
+
+        btn_can_classic = QPushButton("🚗 Szablon CAN 2.0 (8B)")
+        btn_can_classic.setToolTip("Wstawia ramkę klasycznego CAN 2.0 (8 bajtów) i ustawia standard na Klasyczny CAN 2.0.")
+        btn_can_classic.setStyleSheet(chip_style)
+        btn_can_classic.clicked.connect(self.insert_can_classic_template)
+        can_chips_layout.addWidget(btn_can_classic)
+
+        # Kafelki CAN FD i TLV dostępne TYLKO dla candleLight CAN FD:
+        self.btn_can_fd = QPushButton("⚡ Szablon CAN FD (64B)")
+        self.btn_can_fd.setToolTip("Wstawia pełną ramkę CAN FD (64 bajty) z flagą BRS (##1#) i ustawia standard na CAN FD z BRS.")
+        self.btn_can_fd.setStyleSheet(chip_style)
+        self.btn_can_fd.clicked.connect(self.insert_can_fd_template)
+
+        self.btn_can_tlv = QPushButton("📦 Szablon TLV (64B)")
+        self.btn_can_tlv.setToolTip("Wstawia składnię TLV#<ID>#<TYPE>#<PAYLOAD> do pakowania w ot_app_msg_tlv i ustawia standard TLV.")
+        self.btn_can_tlv.setStyleSheet(chip_style)
+        self.btn_can_tlv.clicked.connect(self.insert_can_tlv_template)
+
+        can_chips_layout.addWidget(self.btn_can_fd)
+        can_chips_layout.addWidget(self.btn_can_tlv)
+        self.btn_can_fd.setVisible(self.can_fd_capable)
+        self.btn_can_tlv.setVisible(self.can_fd_capable)
+
+        btn_can_convert = QPushButton("🔄 Konwertuj do trybu")
+        btn_can_convert.setToolTip("Konwertuje aktualnie wpisaną ramkę do standardu wybranego w polu 'Standard CAN'.")
+        btn_can_convert.setStyleSheet("""
+            QPushButton {
+                background-color: #1c7ed6;
+                color: white;
+                font-size: 10px;
+                font-weight: bold;
+                padding: 3px 8px;
+                border: 1px solid #228be6;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #1971c2;
+            }
+        """)
+        btn_can_convert.clicked.connect(self.convert_current_tx_to_can_mode)
+        can_chips_layout.addWidget(btn_can_convert)
+        can_chips_layout.addStretch()
+        self.can_chips_widget.setVisible(self.is_can_mode)
+        helper_layout.addWidget(self.can_chips_widget)
         self.main_layout.addWidget(self.token_helper_frame)
         
         self.stack = QStackedWidget()
@@ -1040,6 +1161,16 @@ class ButtonEditDialog(QDialog):
             self.table_steps.selectRow(r + 1)
 
     def on_payload_type_changed(self, ptype):
+        is_can = (ptype == "CAN") or self.is_can_mode
+        if hasattr(self, "lbl_can_mode") and hasattr(self, "combo_can_mode"):
+            self.lbl_can_mode.setVisible(is_can)
+            self.combo_can_mode.setVisible(is_can)
+        if hasattr(self, "can_chips_widget"):
+            self.can_chips_widget.setVisible(is_can)
+        if hasattr(self, "btn_can_fd"):
+            self.btn_can_fd.setVisible(is_can and self.can_fd_capable)
+        if hasattr(self, "btn_can_tlv"):
+            self.btn_can_tlv.setVisible(is_can and self.can_fd_capable)
         if ptype == "CAN":
             self.le_push_tx.setPlaceholderText(CAN_BUTTON_PLACEHOLDERS["push_tx"])
             self.le_tog_tx_on.setPlaceholderText(CAN_BUTTON_PLACEHOLDERS["tog_tx_on"])
@@ -1098,6 +1229,68 @@ class ButtonEditDialog(QDialog):
             
         self.update_stack(self.combo_type.currentText())
         
+    def insert_can_classic_template(self):
+        idx = self.combo_can_mode.findData(CAN_MODE_CLASSIC)
+        if idx >= 0:
+            self.combo_can_mode.setCurrentIndex(idx)
+        w = self.get_active_tx_widget()
+        if isinstance(w, ClickToClearLineEdit):
+            w.setText("187#01 02 03 04 05 06 07 08")
+            w.setFocus()
+        elif isinstance(w, ClickToClearPlainTextEdit):
+            w.setPlainText("187#01 02 03 04 05 06 07 08")
+            w.setFocus()
+        self.validate_and_preview()
+
+    def insert_can_fd_template(self):
+        idx = self.combo_can_mode.findData(CAN_MODE_FD_BRS)
+        if idx >= 0:
+            self.combo_can_mode.setCurrentIndex(idx)
+        w = self.get_active_tx_widget()
+        fd_example = "321##1#01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F 10"
+        if isinstance(w, ClickToClearLineEdit):
+            w.setText(fd_example)
+            w.setFocus()
+        elif isinstance(w, ClickToClearPlainTextEdit):
+            w.setPlainText(fd_example)
+            w.setFocus()
+        self.validate_and_preview()
+
+    def insert_can_tlv_template(self):
+        idx = self.combo_can_mode.findData(CAN_MODE_TLV)
+        if idx >= 0:
+            self.combo_can_mode.setCurrentIndex(idx)
+        w = self.get_active_tx_widget()
+        tlv_example = "TLV#321#0xA5#Komenda testowa"
+        if isinstance(w, ClickToClearLineEdit):
+            w.setText(tlv_example)
+            w.setFocus()
+        elif isinstance(w, ClickToClearPlainTextEdit):
+            w.setPlainText(tlv_example)
+            w.setFocus()
+        self.validate_and_preview()
+
+    def convert_current_tx_to_can_mode(self):
+        cur_mode = self.combo_can_mode.currentData() or CAN_MODE_AUTO
+        if not self.can_fd_capable:
+            cur_mode = CAN_MODE_CLASSIC
+        w = self.get_active_tx_widget()
+        if isinstance(w, ClickToClearLineEdit):
+            new_txt = convert_can_frame_text(w.text().strip(), cur_mode)
+            if new_txt:
+                w.setText(new_txt)
+        elif isinstance(w, ClickToClearPlainTextEdit):
+            lines = w.toPlainText().splitlines()
+            new_lines = []
+            for line in lines:
+                l_s = line.strip()
+                if l_s and not l_s.lower().startswith("sleep"):
+                    new_lines.append(convert_can_frame_text(l_s, cur_mode))
+                else:
+                    new_lines.append(line)
+            w.setPlainText("\n".join(new_lines))
+        self.validate_and_preview()
+
     def update_stack(self, text):
         mapping = {"push": 0, "toggle": 1, "hold": 2, "trigger": 3, "macro": 4, "query": 5, "step": 6}
         self.stack.setCurrentIndex(mapping.get(text, 0))
@@ -1261,33 +1454,67 @@ class ButtonEditDialog(QDialog):
         ptype = self.combo_payload_type.currentText()
 
         if is_can or ptype == "CAN":
+            can_mode = self.combo_can_mode.currentData() if hasattr(self, 'combo_can_mode') else CAN_MODE_AUTO
+            # Blokada składni CAN FD na adapterze CANable slcan:
+            if not self.can_fd_capable:
+                if "##" in s0 or s0.upper().startswith("TLV#"):
+                    self.lbl_preview_status.setText("⚠️ Adapter CANable (slcan) nie obsługuje składni CAN FD ('##' / 'TLV#'). Dozwolony tylko klasyczny CAN 2.0 (maks. 8B).")
+                    self.lbl_preview_status.setStyleSheet("color: #ff6b6b; font-size: 11px; font-weight: bold;")
+                    self.autofix_action = "strip_double_hash"
+                    self.btn_autofix.setText("⚡ Usuń '##' (zamień na '#')")
+                    self.btn_autofix.setVisible(True)
+                    return
+                can_mode = CAN_MODE_CLASSIC
             try:
-                frame0 = parse_can_frame(s0)
-                frame1 = parse_can_frame(s1)
+                frame0 = parse_can_frame(s0, can_mode=can_mode)
+                frame1 = parse_can_frame(s1, can_mode=can_mode)
                 id_fmt = f"0x{frame0.arbitration_id:08X}" if frame0.is_extended else f"0x{frame0.arbitration_id:03X}"
                 ext_lbl = "29-bit" if frame0.is_extended else "11-bit"
                 if frame0.is_remote:
                     self.lbl_preview_status.setText(f"✅ Poprawna ramka RTR: ID {id_fmt} ({ext_lbl}), DLC: {frame0.dlc}")
                 else:
                     data_hex = frame0.data.hex(' ').upper()
-                    self.lbl_preview_status.setText(f"✅ Poprawna ramka CAN: ID {id_fmt} ({ext_lbl}), DLC: {frame0.dlc} B  |  Dane: [{data_hex}]")
+                    if frame0.is_fd:
+                        brs_str = " [FD+BRS]" if frame0.bitrate_switch else " [FD]"
+                        if s0.upper().startswith("TLV#") or can_mode == CAN_MODE_TLV:
+                            tlv_info = f" | {OtAppMsgTlv.unpack(frame0.data)[0].format_display()}" if len(frame0.data) >= TLV_HEADER_SIZE else ""
+                            self.lbl_preview_status.setText(f"✅ Poprawna ramka CAN FD TLV: ID {id_fmt} ({ext_lbl}), DLC: {frame0.dlc} B{brs_str}{tlv_info}")
+                        else:
+                            self.lbl_preview_status.setText(f"✅ Poprawna ramka CAN FD: ID {id_fmt} ({ext_lbl}), DLC: {frame0.dlc} B{brs_str}  |  Dane: [{data_hex}]")
+                    else:
+                        self.lbl_preview_status.setText(f"✅ Poprawna ramka Klasyczny CAN 2.0: ID {id_fmt} ({ext_lbl}), DLC: {frame0.dlc} B  |  Dane: [{data_hex}]")
                 self.lbl_preview_status.setStyleSheet("color: #69db7c; font-size: 11px; font-weight: bold;")
-            except CanFrameError as e:
+            except (CanFrameError, Exception) as e:
                 err_msg = str(e)
                 self.lbl_preview_status.setText(f"⚠️ {err_msg}")
                 self.lbl_preview_status.setStyleSheet("color: #ff6b6b; font-size: 11px; font-weight: bold;")
 
-                # Sprawdź, czy błąd wynika z nieparzystej liczby cyfr powiązanej z {CNT...}
-                m_tok = re.search(r'\{(CNT|SEQ):([0-9a-fA-F]+)-([0-9a-fA-F]+):([a-zA-Z0-9]+)\}', raw_text)
-                if m_tok:
-                    c_name, r_min, r_max, r_fmt = m_tok.groups()
-                    if "x" in r_fmt.lower() and len(r_min) == 1 and (len(r_max) == 1 or r_max in ("15", "F", "f")):
-                        max_hex = "0F" if r_max in ("15", "F", "f") else f"{int(r_max, 16):02X}"
-                        min_hex = f"{int(r_min, 16):02X}"
-                        self.autofix_target = m_tok.group(0)
-                        self.autofix_replacement = f"{{{c_name}:{min_hex}-{max_hex}:{r_fmt}}}"
-                        self.btn_autofix.setText(f"⚡ Napraw: zamień na {self.autofix_replacement}")
+                # Sprawdź błędy CAN i zaoferuj dedykowany autofix
+                if "Klasyczny CAN 2.0" in err_msg and "CAN FD" in err_msg:
+                    if self.can_fd_capable:
+                        self.autofix_action = "switch_to_fd"
+                        self.btn_autofix.setText("⚡ Przełącz na CAN FD z BRS")
                         self.btn_autofix.setVisible(True)
+                    else:
+                        self.autofix_action = "trim_to_8b"
+                        self.btn_autofix.setText("⚡ Przytnij dane do 8 bajtów")
+                        self.btn_autofix.setVisible(True)
+                elif "##" in err_msg:
+                    self.autofix_action = "strip_double_hash"
+                    self.btn_autofix.setText("⚡ Usuń '##' (zamień na '#')")
+                    self.btn_autofix.setVisible(True)
+                else:
+                    # Sprawdź, czy błąd wynika z nieparzystej liczby cyfr powiązanej z {CNT...}
+                    m_tok = re.search(r'\{(CNT|SEQ):([0-9a-fA-F]+)-([0-9a-fA-F]+):([a-zA-Z0-9]+)\}', raw_text)
+                    if m_tok:
+                        c_name, r_min, r_max, r_fmt = m_tok.groups()
+                        if "x" in r_fmt.lower() and len(r_min) == 1 and (len(r_max) == 1 or r_max in ("15", "F", "f")):
+                            max_hex = "0F" if r_max in ("15", "F", "f") else f"{int(r_max, 16):02X}"
+                            min_hex = f"{int(r_min, 16):02X}"
+                            self.autofix_target = m_tok.group(0)
+                            self.autofix_replacement = f"{{{c_name}:{min_hex}-{max_hex}:{r_fmt}}}"
+                            self.btn_autofix.setText(f"⚡ Napraw: zamień na {self.autofix_replacement}")
+                            self.btn_autofix.setVisible(True)
         elif ptype == "HEX":
             compact = re.sub(r'[\s.:_\-]', '', s0)
             if compact and not _HEX_RE.match(compact):
@@ -1305,6 +1532,35 @@ class ButtonEditDialog(QDialog):
             self.lbl_preview_status.setStyleSheet("color: #69db7c; font-size: 11px; font-weight: bold;")
 
     def apply_autofix(self):
+        if getattr(self, "autofix_action", None) == "switch_to_fd":
+            idx = self.combo_can_mode.findData(CAN_MODE_FD_BRS)
+            if idx >= 0:
+                self.combo_can_mode.setCurrentIndex(idx)
+            self.autofix_action = None
+            self.btn_autofix.setVisible(False)
+            self.validate_and_preview()
+            return
+        elif getattr(self, "autofix_action", None) == "strip_double_hash":
+            w = self.get_active_tx_widget()
+            if isinstance(w, ClickToClearLineEdit):
+                w.setText(w.text().replace("##1#", "#").replace("##0#", "#").replace("##", "#"))
+            elif isinstance(w, ClickToClearPlainTextEdit):
+                w.setPlainText(w.toPlainText().replace("##1#", "#").replace("##0#", "#").replace("##", "#"))
+            self.autofix_action = None
+            self.btn_autofix.setVisible(False)
+            self.validate_and_preview()
+            return
+        elif getattr(self, "autofix_action", None) == "trim_to_8b":
+            w = self.get_active_tx_widget()
+            if isinstance(w, ClickToClearLineEdit):
+                new_txt = convert_can_frame_text(w.text().strip(), CAN_MODE_CLASSIC)
+                if new_txt:
+                    w.setText(new_txt)
+            self.autofix_action = None
+            self.btn_autofix.setVisible(False)
+            self.validate_and_preview()
+            return
+
         if not self.autofix_target or not self.autofix_replacement:
             return
         w = self.get_active_tx_widget()
@@ -1331,9 +1587,10 @@ class ButtonEditDialog(QDialog):
         if raw_text and is_can:
             dummy = {}
             s0 = evaluate_dynamic_tokens(raw_text, dummy, "check")
+            can_mode = self.combo_can_mode.currentData() if hasattr(self, 'combo_can_mode') else CAN_MODE_AUTO
             try:
-                parse_can_frame(s0)
-            except CanFrameError as e:
+                parse_can_frame(s0, can_mode=can_mode)
+            except (CanFrameError, Exception) as e:
                 ret = QMessageBox.warning(
                     self, 
                     "Ostrzeżenie o błędzie składni CAN", 
@@ -1361,7 +1618,8 @@ class ButtonEditDialog(QDialog):
             "type": t,
             "name": self.le_name.text(),
             "show_marker": self.cb_show_marker.isChecked(),
-            "payload_type": "CAN" if self.is_can_mode else self.combo_payload_type.currentText()
+            "payload_type": "CAN" if self.is_can_mode else self.combo_payload_type.currentText(),
+            "can_mode": self.combo_can_mode.currentData() if hasattr(self, 'combo_can_mode') else CAN_MODE_AUTO
         }
         if t == "push":
             res["tx"] = self.le_push_tx.text().strip()
@@ -1712,11 +1970,10 @@ class ConfigEditDialog(QDialog):
         self.combo_transport = QComboBox()
         self.combo_transport.addItem(TRANSPORT_LABELS[TRANSPORT_SERIAL], TRANSPORT_SERIAL)
         self.combo_transport.addItem(TRANSPORT_LABELS[TRANSPORT_SLCAN], TRANSPORT_SLCAN)
+        self.combo_transport.addItem(TRANSPORT_LABELS[TRANSPORT_CANDLE], TRANSPORT_CANDLE)
         cur_transport = self.data.get("transport", TRANSPORT_SERIAL)
-        if cur_transport == TRANSPORT_SLCAN:
-            self.combo_transport.setCurrentIndex(1)
-        else:
-            self.combo_transport.setCurrentIndex(0)
+        idx_t = self.combo_transport.findData(cur_transport)
+        self.combo_transport.setCurrentIndex(idx_t if idx_t >= 0 else 0)
         conn_form.addRow("Typ połączenia:", self.combo_transport)
 
         # Sekcja CAN
@@ -1731,7 +1988,51 @@ class ConfigEditDialog(QDialog):
             self.combo_can_bitrate.addItem(f"{format_bitrate_label(br)} ({br} bps)", br)
             if br == cur_br:
                 self.combo_can_bitrate.setCurrentIndex(self.combo_can_bitrate.count() - 1)
-        can_form.addRow("Bitrate CAN:", self.combo_can_bitrate)
+        self.lbl_can_bitrate = QLabel("Bitrate CAN (Nominal):")
+        can_form.addRow(self.lbl_can_bitrate, self.combo_can_bitrate)
+
+        # Opcje CAN FD (tylko dla candleLight)
+        self.can_fd_frame = QWidget()
+        can_fd_layout = QFormLayout(self.can_fd_frame)
+        can_fd_layout.setContentsMargins(0, 0, 0, 0)
+        self.cb_can_fd = QCheckBox("Włącz CAN FD (faza szybkich danych BRS, do 64B)")
+        self.cb_can_fd.setChecked(bool(self.data.get("can_fd_enabled", True)))
+        can_fd_layout.addRow(self.cb_can_fd)
+
+        self.combo_can_data_bitrate = QComboBox()
+        cur_dbr = self.data.get("can_data_bitrate", DEFAULT_CAN_DATA_BITRATE)
+        for dbr in CAN_DATA_BITRATES:
+            self.combo_can_data_bitrate.addItem(f"{format_bitrate_label(dbr)} ({dbr} bps)", dbr)
+            if dbr == cur_dbr:
+                self.combo_can_data_bitrate.setCurrentIndex(self.combo_can_data_bitrate.count() - 1)
+        self.lbl_data_bitrate = QLabel("Data Bitrate (CAN FD):")
+        can_fd_layout.addRow(self.lbl_data_bitrate, self.combo_can_data_bitrate)
+
+        self.combo_can_sample_point = QComboBox()
+        sp_options = [
+            ("80.0% — Standard CiA 601-1 (Zalecany dla CAN FD)", 80.0),
+            ("75.0% — Długie linie / Większe opóźnienia", 75.0),
+            ("70.0% — Alternatywny", 70.0),
+            ("87.5% — Klasyczny CAN (Wysoki)", 87.5),
+        ]
+        cur_sp = float(self.data.get("can_data_sample_point", 80.0))
+        for label, val in sp_options:
+            self.combo_can_sample_point.addItem(label, val)
+            if abs(val - cur_sp) < 0.1:
+                self.combo_can_sample_point.setCurrentIndex(self.combo_can_sample_point.count() - 1)
+        self.lbl_sample_point = QLabel("Sample Point (CiA 601-1):")
+        can_fd_layout.addRow(self.lbl_sample_point, self.combo_can_sample_point)
+
+        def on_fd_toggled(checked):
+            self.combo_can_data_bitrate.setEnabled(checked)
+            self.combo_can_sample_point.setEnabled(checked)
+            self.lbl_data_bitrate.setEnabled(checked)
+            self.lbl_sample_point.setEnabled(checked)
+
+        self.cb_can_fd.toggled.connect(on_fd_toggled)
+        on_fd_toggled(self.cb_can_fd.isChecked())
+
+        can_form.addRow(self.can_fd_frame)
 
         self.cb_can_listen_only = QCheckBox("Tryb nasłuchu (Listen-only)")
         self.cb_can_listen_only.setToolTip("Adapter nie generuje bitów ACK ani ramek błędów na magistrali")
@@ -1771,9 +2072,17 @@ class ConfigEditDialog(QDialog):
         self.tabs.addTab(conn_tab, "Połączenie")
 
         def update_conn_sections():
-            is_can = self.combo_transport.currentData() == TRANSPORT_SLCAN
+            cur_trans = self.combo_transport.currentData()
+            is_can = is_can_transport(cur_trans)
+            is_candle = (cur_trans == TRANSPORT_CANDLE)
             self.can_group.setVisible(is_can)
             self.serial_group.setVisible(not is_can)
+            if hasattr(self, "can_fd_frame"):
+                self.can_fd_frame.setVisible(is_candle)
+            else:
+                self.cb_can_fd.setVisible(is_candle)
+                self.combo_can_data_bitrate.setVisible(is_candle)
+            self.lbl_can_bitrate.setText("Bitrate CAN (Nominal):" if is_candle else "Bitrate CAN:")
 
         self.combo_transport.currentIndexChanged.connect(update_conn_sections)
         update_conn_sections()
@@ -1831,8 +2140,10 @@ class ConfigEditDialog(QDialog):
         
     def edit_button(self, item):
         idx = self.list_btns.row(item)
-        is_can = self.combo_transport.currentData() == TRANSPORT_SLCAN
-        dlg = ButtonEditDialog(self.data["buttons"][idx], self, is_can_mode=is_can)
+        trans = self.combo_transport.currentData()
+        is_can = is_can_transport(trans)
+        can_fd_on = bool(self.cb_can_fd.isChecked()) if trans == TRANSPORT_CANDLE else False
+        dlg = ButtonEditDialog(self.data["buttons"][idx], self, is_can_mode=is_can, transport=trans, can_fd_enabled=can_fd_on)
         if dlg.exec():
             self.data["buttons"][idx] = dlg.get_data()
             b = self.data["buttons"][idx]
@@ -1864,8 +2175,14 @@ class ConfigEditDialog(QDialog):
     def on_save(self):
         try:
             self.data["transport"] = self.combo_transport.currentData()
-            if self.data["transport"] == TRANSPORT_SLCAN:
+            if is_can_transport(self.data["transport"]):
                 self.data["can_bitrate"] = self.combo_can_bitrate.currentData()
+                self.data["can_data_bitrate"] = self.combo_can_data_bitrate.currentData()
+                if hasattr(self, "combo_can_sample_point"):
+                    sp_val = float(self.combo_can_sample_point.currentData() or 80.0)
+                    self.data["can_sample_point"] = sp_val
+                    self.data["can_data_sample_point"] = sp_val
+                self.data["can_fd_enabled"] = self.cb_can_fd.isChecked()
                 self.data["can_listen_only"] = self.cb_can_listen_only.isChecked()
                 self.data["can_watch_auto"] = self.cb_can_watch_auto.isChecked()
             else:
@@ -2207,7 +2524,190 @@ class ParserManagerDialog(QDialog):
         elif logical_index == 2:
             self.app_config["parsers"].sort(key=lambda p: p.get("text", "").lower(), reverse=not self.sort_asc)
             
-        self.refresh_table()
+# ==========================================
+# DIALOG KREATORA / NADAJNIKA CAN FD & TLV
+# ==========================================
+class CanFdTxDialog(QDialog):
+    """Kreator i nadajnik ramek CAN / CAN FD oraz binarnej struktury ot_app_msg_tlv (<BH)."""
+    def __init__(self, parent_tab, parent=None):
+        super().__init__(parent)
+        self.tab = parent_tab
+        self.setWindowTitle("📦 Kreator i Nadajnik Ramek CAN FD / TLV")
+        self.resize(540, 480)
+        
+        self.timer_cyclic = QTimer(self)
+        self.timer_cyclic.timeout.connect(self._send_cyclic_tick)
+
+        layout = QVBoxLayout(self)
+
+        # Parametry nagłówka CAN
+        hdr_box = QFrame()
+        hdr_box.setStyleSheet("QFrame { background-color: #202024; border: 1px solid #323238; border-radius: 4px; padding: 6px; }")
+        hdr_vbox = QVBoxLayout(hdr_box)
+        hdr_form = QFormLayout()
+
+        self.edit_id = QLineEdit("321")
+        self.edit_id.setPlaceholderText("np. 321 (11-bit) lub 18FEF100 (29-bit)")
+        hdr_form.addRow("CAN ID (Hex):", self.edit_id)
+
+        flags_layout = QHBoxLayout()
+        self.cb_ext = QCheckBox("ID Rozszerzone (29-bit)")
+        self.cb_fd = QCheckBox("CAN FD")
+        self.cb_fd.setChecked(True)
+        self.cb_brs = QCheckBox("BRS (Fast Data Bitrate)")
+        self.cb_brs.setChecked(True)
+        flags_layout.addWidget(self.cb_ext)
+        flags_layout.addWidget(self.cb_fd)
+        flags_layout.addWidget(self.cb_brs)
+        hdr_form.addRow("Flagi ramki:", flags_layout)
+
+        hdr_vbox.addLayout(hdr_form)
+        layout.addWidget(hdr_box)
+
+        # Format danych (Payload)
+        data_box = QFrame()
+        data_box.setStyleSheet("QFrame { background-color: #202024; border: 1px solid #323238; border-radius: 4px; padding: 6px; }")
+        data_vbox = QVBoxLayout(data_box)
+
+        mode_layout = QHBoxLayout()
+        self.radio_tlv = QRadioButton("Struktura binarna TLV (ot_app_msg_tlv: <BH, 64B)")
+        self.radio_raw = QRadioButton("Surowe dane Hex (do 64 bajtów)")
+        self.radio_tlv.setChecked(True)
+        mode_layout.addWidget(self.radio_tlv)
+        mode_layout.addWidget(self.radio_raw)
+        data_vbox.addLayout(mode_layout)
+
+        # Panel TLV
+        self.tlv_widget = QWidget()
+        tlv_form = QFormLayout(self.tlv_widget)
+        self.edit_tlv_type = QLineEdit("0xA5")
+        self.edit_tlv_type.setPlaceholderText("np. 0xA5 lub 165")
+        self.edit_tlv_val = QLineEdit("SerialCommander CAN FD TLV payload")
+        self.edit_tlv_val.setPlaceholderText("Tekst wartości do spakowania w TLV")
+        tlv_form.addRow("Typ TLV (Type):", self.edit_tlv_type)
+        tlv_form.addRow("Wartość TLV (Value):", self.edit_tlv_val)
+        data_vbox.addWidget(self.tlv_widget)
+
+        # Panel RAW HEX
+        self.raw_widget = QWidget()
+        raw_form = QFormLayout(self.raw_widget)
+        self.edit_raw_hex = QLineEdit("11 22 33 44 55 66 77 88 AA BB CC DD EE FF 00 11")
+        self.edit_raw_hex.setPlaceholderText("Bajty hex oddzielone spacjami")
+        raw_form.addRow("Dane Hex:", self.edit_raw_hex)
+        data_vbox.addWidget(self.raw_widget)
+        self.raw_widget.hide()
+
+        def on_mode_change():
+            is_tlv = self.radio_tlv.isChecked()
+            self.tlv_widget.setVisible(is_tlv)
+            self.raw_widget.setVisible(not is_tlv)
+            self.update_preview()
+
+        self.radio_tlv.toggled.connect(on_mode_change)
+        layout.addWidget(data_box)
+
+        # Podgląd ramki
+        prev_box = QFrame()
+        prev_box.setStyleSheet("QFrame { background-color: #1a1a1e; border: 1px solid #2e2e34; border-radius: 4px; padding: 6px; }")
+        prev_vbox = QVBoxLayout(prev_box)
+        prev_hdr = QLabel("Podgląd generowanej ramki:")
+        prev_hdr.setStyleSheet("color: #a1a1aa; font-size: 11px;")
+        self.lbl_preview = QLabel("...")
+        self.lbl_preview.setWordWrap(True)
+        self.lbl_preview.setStyleSheet("font-family: monospace; color: #ffd43b; font-size: 11px;")
+        prev_vbox.addWidget(prev_hdr)
+        prev_vbox.addWidget(self.lbl_preview)
+        layout.addWidget(prev_box)
+
+        # Nadawanie
+        tx_layout = QHBoxLayout()
+        self.btn_send_once = QPushButton("⚡ Wyślij raz")
+        self.btn_send_once.setStyleSheet("background-color: #228be6; color: white; font-weight: bold; padding: 6px 12px;")
+        self.btn_send_once.clicked.connect(self.send_once)
+
+        self.spin_interval = QSpinBox()
+        self.spin_interval.setRange(10, 10000)
+        self.spin_interval.setValue(100)
+        self.spin_interval.setSuffix(" ms")
+
+        self.btn_send_cyclic = QPushButton("🔁 Nadawaj cyklicznie")
+        self.btn_send_cyclic.setStyleSheet("background-color: #2b8a3e; color: white; font-weight: bold; padding: 6px 12px;")
+        self.btn_send_cyclic.clicked.connect(self.toggle_cyclic)
+
+        self.btn_copy_cmd = QPushButton("📋 Kopiuj polecenie")
+        self.btn_copy_cmd.clicked.connect(self.copy_command)
+
+        tx_layout.addWidget(self.btn_send_once)
+        tx_layout.addWidget(QLabel("Interwał:"))
+        tx_layout.addWidget(self.spin_interval)
+        tx_layout.addWidget(self.btn_send_cyclic)
+        tx_layout.addWidget(self.btn_copy_cmd)
+        layout.addLayout(tx_layout)
+
+        self.edit_id.textChanged.connect(self.update_preview)
+        self.edit_tlv_type.textChanged.connect(self.update_preview)
+        self.edit_tlv_val.textChanged.connect(self.update_preview)
+        self.edit_raw_hex.textChanged.connect(self.update_preview)
+        self.cb_ext.toggled.connect(self.update_preview)
+        self.cb_fd.toggled.connect(self.update_preview)
+        self.cb_brs.toggled.connect(self.update_preview)
+
+        self.update_preview()
+
+    def build_frame_command(self) -> str:
+        raw_id = self.edit_id.text().strip()
+        clean_id = (raw_id[2:] if raw_id.lower().startswith("0x") else raw_id) or "321"
+
+        if self.radio_tlv.isChecked():
+            raw_type = self.edit_tlv_type.text().strip() or "0xA5"
+            val_text = self.edit_tlv_val.text()
+            return f"TLV#{clean_id}#{raw_type}#{val_text}"
+        else:
+            raw_hex = self.edit_raw_hex.text().strip()
+            if self.cb_fd.isChecked():
+                brs_ch = "1" if self.cb_brs.isChecked() else "0"
+                return f"{clean_id}##{brs_ch}#{raw_hex}"
+            else:
+                return f"{clean_id}#{raw_hex}"
+
+    def update_preview(self):
+        try:
+            cmd = self.build_frame_command()
+            frame = parse_can_frame(cmd)
+            display_text = frame.to_display()
+            self.lbl_preview.setText(f"Polecenie: {cmd}\nRamka:     {display_text}\nRozmiar:   {frame.dlc}B (FD: {frame.is_fd}, BRS: {frame.bitrate_switch})")
+        except Exception as e:
+            self.lbl_preview.setText(f"[Błąd składni]: {e}")
+
+    def send_once(self):
+        cmd = self.build_frame_command()
+        if self.tab:
+            self.tab.send_payload(cmd, source_name="CAN FD TX", payload_type="CAN")
+
+    def _send_cyclic_tick(self):
+        self.send_once()
+
+    def toggle_cyclic(self):
+        if self.timer_cyclic.isActive():
+            self.timer_cyclic.stop()
+            self.btn_send_cyclic.setText("🔁 Nadawaj cyklicznie")
+            self.btn_send_cyclic.setStyleSheet("background-color: #2b8a3e; color: white; font-weight: bold; padding: 6px 12px;")
+        else:
+            self.send_once()
+            self.timer_cyclic.start(self.spin_interval.value())
+            self.btn_send_cyclic.setText("⏹ Zatrzymaj")
+            self.btn_send_cyclic.setStyleSheet("background-color: #e67700; color: white; font-weight: bold; padding: 6px 12px;")
+
+    def copy_command(self):
+        from PyQt6.QtWidgets import QApplication
+        cmd = self.build_frame_command()
+        QApplication.clipboard().setText(cmd)
+        if self.tab:
+            self.tab.log_info(f"Skopiowano polecenie CAN FD do schowka: {cmd}")
+
+    def closeEvent(self, event):
+        self.timer_cyclic.stop()
+        super().closeEvent(event)
 
 # ==========================================
 # 5. GŁÓWNY INTERFEJS KARTY (SerialTab)
@@ -2737,8 +3237,16 @@ class SerialTab(QWidget):
         self.btn_send_cmd.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_send_cmd.setStyleSheet("background-color: #228be6; color: white; font-weight: bold; border: none;")
         self.btn_send_cmd.clicked.connect(self.send_manual_command)
+
+        self.btn_can_fd_builder = QPushButton("📦 TLV / CAN FD")
+        self.btn_can_fd_builder.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_can_fd_builder.setStyleSheet("background-color: #2b8a3e; color: white; font-weight: bold; border: none; padding: 4px 8px;")
+        self.btn_can_fd_builder.setToolTip("Otwórz kreator i nadajnik ramek CAN FD oraz struktur binarnych TLV")
+        self.btn_can_fd_builder.clicked.connect(self.open_can_fd_builder)
+        self.btn_can_fd_builder.hide()
         
         cmd_layout.addWidget(self.cmd_input, stretch=1)
+        cmd_layout.addWidget(self.btn_can_fd_builder)
         cmd_layout.addWidget(self.combo_cmd_format)
         cmd_layout.addWidget(self.combo_eol)
         cmd_layout.addWidget(self.btn_send_cmd)
@@ -2802,7 +3310,7 @@ class SerialTab(QWidget):
         key = key.strip()
         if not key:
             return
-        is_can = self.app_config.get("transport") == TRANSPORT_SLCAN
+        is_can = is_can_transport(self.app_config.get("transport"))
         if is_can:
             norm_key = normalize_can_id_text(key)
             if norm_key:
@@ -3013,17 +3521,26 @@ class SerialTab(QWidget):
 
     def update_header_title(self):
         connected = bool(self.worker and self.worker.is_running)
-        dot = "🟢" if connected else "⚪"
+        idx = self.port_combo.currentIndex()
+        is_busy = bool(self.port_combo.itemData(idx, Qt.ItemDataRole.UserRole + 2)) if idx >= 0 else False
+        dot = "🟢" if connected else ("🔒" if is_busy else "⚪")
         port = self.get_selected_port_device() or "Brak portu"
         cfg = self.combo_cfg.currentText() or "default.json"
         side_label = "LEWA" if self.panel_side == "left" else "PRAWA"
         
         self.lbl_side_badge.setText(f"[{side_label}]")
-        is_can = self.app_config.get("transport") == TRANSPORT_SLCAN
+        is_can = is_can_transport(self.app_config.get("transport"))
         if is_can:
+            trans = self.app_config.get("transport")
             br_label = format_bitrate_label(self.app_config.get("can_bitrate", DEFAULT_CAN_BITRATE))
             lo_tag = " [LO]" if self.app_config.get("can_listen_only", False) else ""
-            mode_tag = f" · CAN {br_label}{lo_tag}"
+            if trans == TRANSPORT_CANDLE:
+                dbr_label = format_bitrate_label(self.app_config.get("can_data_bitrate", DEFAULT_CAN_DATA_BITRATE))
+                fd_on = self.app_config.get("can_fd_enabled", True)
+                fd_tag = f"/{dbr_label}" if fd_on else " (2.0)"
+                mode_tag = f" · CAN FD {br_label}{fd_tag}{lo_tag}"
+            else:
+                mode_tag = f" · CAN {br_label}{lo_tag}"
         else:
             mode_tag = ""
         self.btn_card_selector.setText(f"{dot}  {port}{mode_tag}   —   Profil: {cfg}   ▾")
@@ -3042,10 +3559,24 @@ class SerialTab(QWidget):
     # ==========================================
     # BAUDRATE, BITRATE I INTERFEJS TRANSPORTU
     # ==========================================
+    def open_can_fd_builder(self):
+        trans = self.app_config.get("transport", TRANSPORT_SERIAL)
+        if trans != TRANSPORT_CANDLE:
+            QMessageBox.information(
+                self, "Informacja",
+                "Kreator TLV / CAN FD jest dostępny wyłącznie dla adaptera candleLight w trybie CAN FD.\n\n"
+                f"Bieżący profil używa: {TRANSPORT_LABELS.get(trans, trans)}."
+            )
+            return
+        dlg = CanFdTxDialog(self, self)
+        dlg.exec()
+
     def apply_transport_ui(self):
-        is_can = self.app_config.get("transport") == TRANSPORT_SLCAN
+        trans = self.app_config.get("transport", TRANSPORT_SERIAL)
+        is_can = is_can_transport(trans)
+        is_candle = (trans == TRANSPORT_CANDLE)
         
-        self.lbl_baud.setText("Bitrate:" if is_can else "Baud:")
+        self.lbl_baud.setText("Nominal:" if is_candle else ("Bitrate:" if is_can else "Baud:"))
         self.baud_combo.blockSignals(True)
         self.baud_combo.clear()
         
@@ -3056,14 +3587,22 @@ class SerialTab(QWidget):
                 self.baud_combo.addItem(label, br)
                 if br == current_br:
                     self.baud_combo.setCurrentIndex(self.baud_combo.count() - 1)
-            self.baud_combo.setToolTip("Prędkość transmisji magistrali CAN")
+            self.baud_combo.setToolTip("Prędkość nominalna magistrali CAN" if is_candle else "Prędkość transmisji magistrali CAN")
             
             self.lbl_rx.hide()
             self.radio_ascii.hide()
             self.radio_binary.hide()
             self.combo_cmd_format.hide()
             self.combo_eol.hide()
-            self.cmd_input.setPlaceholderText("Wpisz ramkę CAN (np. 187#01 02 03, Enter = wyślij)...")
+            # Przycisk TLV / CAN FD dostępny WYŁĄCZNIE dla candleLight w trybie CAN FD:
+            is_candle_fd = is_candle and bool(self.app_config.get("can_fd_enabled", True))
+            if hasattr(self, "btn_can_fd_builder"):
+                self.btn_can_fd_builder.setVisible(is_candle_fd)
+
+            if is_candle:
+                self.cmd_input.setPlaceholderText("CAN FD: 321#01 02, 321##1#01 02, TLV#321#0xA5#Tekst (Enter = wyślij)...")
+            else:
+                self.cmd_input.setPlaceholderText("Wpisz ramkę CAN (np. 187#01 02 03, Enter = wyślij)...")
             
             self.action_dtr.setVisible(False)
             self.action_rts.setVisible(False)
@@ -3082,6 +3621,8 @@ class SerialTab(QWidget):
             self.radio_binary.show()
             self.combo_cmd_format.show()
             self.combo_eol.show()
+            if hasattr(self, "btn_can_fd_builder"):
+                self.btn_can_fd_builder.hide()
             self.cmd_input.setPlaceholderText("Wpisz komendę (Enter = wyślij, ↑/↓ = historia)...")
             
             self.action_dtr.setVisible(True)
@@ -3113,7 +3654,7 @@ class SerialTab(QWidget):
         self.baud_combo.blockSignals(False)
 
     def on_baud_changed(self, text: str):
-        is_can = self.app_config.get("transport") == TRANSPORT_SLCAN
+        is_can = is_can_transport(self.app_config.get("transport"))
         if is_can:
             bitrate_val = self.baud_combo.currentData()
             if bitrate_val is not None:
@@ -3280,7 +3821,7 @@ class SerialTab(QWidget):
         self.combo_eol.blockSignals(False)
 
         self.cb_watch_print.blockSignals(True)
-        self.cb_watch_print.setChecked(self.app_config.get("watch_print_in_console", False))
+        self.cb_watch_print.setChecked(self.app_config.get("watch_print_in_console", True))
         self.cb_watch_print.blockSignals(False)
 
         # Wyczyść widżety watch przy zmianie profilu (pojawią się ponownie po odebraniu pasujących ramek)
@@ -3309,10 +3850,12 @@ class SerialTab(QWidget):
     def get_tab_title(self):
         self.update_header_title()
         connected = bool(self.worker and self.worker.is_running)
-        dot = "🟢" if connected else "⚪"
+        idx = self.port_combo.currentIndex()
+        is_busy = bool(self.port_combo.itemData(idx, Qt.ItemDataRole.UserRole + 2)) if idx >= 0 else False
+        dot = "🟢" if connected else ("🔒" if is_busy else "⚪")
         port = self.get_selected_port_device() or "Brak"
         cfg = self.combo_cfg.currentText() or "default.json"
-        is_can = self.app_config.get("transport") == TRANSPORT_SLCAN
+        is_can = is_can_transport(self.app_config.get("transport"))
         tag = " · CAN" if is_can else ""
         if cfg in (f"{port}.json", f"{port}_CAN.json"):
             return f"{dot} {port}{tag}"
@@ -3359,7 +3902,7 @@ class SerialTab(QWidget):
             return
             
         new_port = self.get_selected_port_device()
-        is_can = self.app_config.get("transport") == TRANSPORT_SLCAN
+        is_can = is_can_transport(self.app_config.get("transport"))
         has_changes = force
 
         if is_can:
@@ -3538,8 +4081,10 @@ class SerialTab(QWidget):
     # ==========================================
     def edit_button_config(self, idx):
         btn_data = self.app_config["buttons"][idx]
-        is_can = self.app_config.get("transport") == TRANSPORT_SLCAN
-        dialog = ButtonEditDialog(btn_data, self, is_can_mode=is_can)
+        trans = self.app_config.get("transport", TRANSPORT_SERIAL)
+        is_can = is_can_transport(trans)
+        can_fd_on = bool(self.app_config.get("can_fd_enabled", True))
+        dialog = ButtonEditDialog(btn_data, self, is_can_mode=is_can, transport=trans, can_fd_enabled=can_fd_on)
         
         if dialog.exec(): 
             new_data = dialog.get_data()
@@ -3577,9 +4122,24 @@ class SerialTab(QWidget):
         if btn_cfg.get("is_used", False):
             b_type = btn_cfg.get("type", "toggle")
             name = btn_cfg.get("name", f"Btn {idx+1}")
-            is_can = self.app_config.get("transport") == TRANSPORT_SLCAN
+            is_can = is_can_transport(self.app_config.get("transport"))
             p_type = btn_cfg.get("payload_type", "CAN" if is_can else "ASCII")
             
+            if is_can:
+                trans = self.app_config.get("transport", TRANSPORT_SERIAL)
+                if trans == TRANSPORT_SLCAN:
+                    p_type = "CAN 2.0"
+                else:
+                    c_mode = btn_cfg.get("can_mode", CAN_MODE_AUTO)
+                    mode_str = {
+                        CAN_MODE_CLASSIC: "CAN 2.0",
+                        CAN_MODE_FD_BRS: "CAN FD+BRS",
+                        CAN_MODE_FD_NO_BRS: "CAN FD",
+                        CAN_MODE_TLV: "CAN FD TLV",
+                        CAN_MODE_AUTO: "CAN Auto",
+                    }.get(c_mode, "CAN")
+                    p_type = mode_str
+
             if b_type == "toggle":
                 state = self.button_states[idx]
                 btn.setText(f"🔘 {name}: {'ON' if state else 'OFF'}")
@@ -3713,7 +4273,7 @@ class SerialTab(QWidget):
         menu.addSeparator()
 
         # Opcja Przypnij do Live Watch (z zaznaczenia lub automatycznie z klucza linii pod kursorem)
-        is_can = self.app_config.get("transport") == TRANSPORT_SLCAN
+        is_can = is_can_transport(self.app_config.get("transport"))
         if is_can:
             can_cand = extract_can_id_from_line(clean_line)
             if selected and len(selected) <= 8 and normalize_can_id_text(selected):
@@ -3757,6 +4317,50 @@ class SerialTab(QWidget):
     def refresh_ports(self):
         self.port_combo.blockSignals(True)
         self.port_combo.clear()
+
+        trans = self.app_config.get("transport") if self.app_config else None
+        if trans == TRANSPORT_CANDLE:
+            candle_devs = list_candle_devices()
+            current_devices = {item[0] for item in candle_devs}
+            new_ports = set()
+            busy_ports = []
+            for item in candle_devs:
+                ch_id, label = item[0], item[1]
+                is_busy = getattr(item, "is_busy", False)
+                if is_busy:
+                    busy_ports.append(ch_id)
+                disp_text = f"{ch_id} 🔒" if is_busy else ch_id
+                self.port_combo.addItem(disp_text)
+                idx = self.port_combo.count() - 1
+                self.port_combo.setItemData(idx, ch_id, Qt.ItemDataRole.UserRole)
+                self.port_combo.setItemData(idx, label, Qt.ItemDataRole.UserRole + 1)
+                self.port_combo.setItemData(idx, is_busy, Qt.ItemDataRole.UserRole + 2)
+                tooltip = f"{label}\nUrządzenie jest zajęte przez inną aplikację (brak dostępu WinUSB / Access Denied)." if is_busy else label
+                self.port_combo.setItemData(idx, tooltip, Qt.ItemDataRole.ToolTipRole)
+
+            self.port_combo._apply_item_styles()
+
+            saved_port = self.app_config.get("port") if self.app_config else None
+            if saved_port:
+                for i in range(self.port_combo.count()):
+                    if self.port_combo.itemData(i, Qt.ItemDataRole.UserRole) == saved_port:
+                        self.port_combo.setCurrentIndex(i)
+                        break
+            self.port_combo.blockSignals(False)
+            
+            free_count = len(candle_devs) - len(busy_ports)
+            if not candle_devs:
+                self.log_info("Nie znaleziono żadnych urządzeń candleLight (WinUSB).")
+            elif busy_ports and free_count == 0:
+                self.log_info(f"⚠️ Wykryto interfejs candleLight ({', '.join(busy_ports)}), ale jest ZAJĘTY przez inną aplikację (Access Denied).")
+            elif busy_ports:
+                self.log_info(f"Znaleziono interfejsy candleLight: {free_count} wolny(ch), {len(busy_ports)} zajęty(ch) przez inny program.")
+            else:
+                self.log_info(f"Znaleziono {len(candle_devs)} interfejs(ów) candleLight.")
+            self.update_header_title()
+            self.tab_state_changed.emit()
+            return
+
         ports = serial.tools.list_ports.comports()
         current_devices = {p.device for p in ports}
 
@@ -3861,15 +4465,29 @@ class SerialTab(QWidget):
                 QMessageBox.warning(self, "Błąd", "Nie wybrano portu COM!")
                 return
 
-            is_can = self.app_config.get("transport") == TRANSPORT_SLCAN
+            trans = self.app_config.get("transport", TRANSPORT_SERIAL)
+            is_can = is_can_transport(trans)
 
             if is_can:
                 if not CAN_AVAILABLE:
                     QMessageBox.critical(
                         self, "Brak biblioteki python-can",
-                        f"Tryb CANable wymaga biblioteki python-can.\n{CAN_IMPORT_ERROR}\n\nZainstaluj ją poleceniem:\npip install python-can"
+                        f"Tryb CAN wymaga biblioteki python-can.\n{CAN_IMPORT_ERROR}\n\nZainstaluj ją poleceniem:\npip install python-can"
                     )
                     return
+
+                if trans == TRANSPORT_CANDLE:
+                    idx = self.port_combo.currentIndex()
+                    is_busy = bool(self.port_combo.itemData(idx, Qt.ItemDataRole.UserRole + 2)) if idx >= 0 else False
+                    if is_busy:
+                        QMessageBox.warning(
+                            self, "Interfejs zajęty",
+                            f"Urządzenie candleLight ({selected_port}) jest obecnie używane przez inną aplikację "
+                            f"(np. HUD ECU Hacker, inny terminal lub proces w tle) i nie zezwala na współdzielenie dostępu WinUSB.\n\n"
+                            f"Zamknij połączenie w tamtym programie, kliknij 'Odśwież' (⟳) i spróbuj połączyć się ponownie."
+                        )
+                        self.log_info(f"❌ Połączenie anulowane: interfejs {selected_port} jest zajęty przez inną aplikację.")
+                        return
 
                 try:
                     bitrate_data = self.baud_combo.currentData()
@@ -3878,21 +4496,33 @@ class SerialTab(QWidget):
                     selected_bitrate = DEFAULT_CAN_BITRATE
 
                 listen_only = bool(self.app_config.get("can_listen_only", False))
+                data_bitrate = int(self.app_config.get("can_data_bitrate", DEFAULT_CAN_DATA_BITRATE))
+                fd_enabled = bool(self.app_config.get("can_fd_enabled", True))
 
+                safe_port = selected_port.replace(":", "_").replace("/", "_")
                 if os.path.basename(self.current_cfg_file) == "default.json":
-                    new_name = f"{selected_port}_CAN.json"
+                    new_name = f"{safe_port}_CANFD.json" if trans == TRANSPORT_CANDLE else f"{safe_port}_CAN.json"
                     new_path = os.path.join(CFG_DIR, new_name)
                     self.current_cfg_file = new_path
                     self.save_current_settings_to_config(force=True)
                     self.refresh_configs_list(select_file=new_name)
 
+                sample_point = float(self.app_config.get("can_sample_point", 80.0))
+                data_sample_point = float(self.app_config.get("can_data_sample_point", 80.0))
+
                 lo_tag = " [Listen-only]" if listen_only else ""
-                self.log_info(f"Łączenie z adapterem CANable (slcan) na {selected_port} ({format_bitrate_label(selected_bitrate)}{lo_tag})...")
+                if trans == TRANSPORT_CANDLE:
+                    fd_tag = f" / Data {format_bitrate_label(data_bitrate)} (SP: {data_sample_point:.0f}%)" if fd_enabled else " (2.0)"
+                    self.log_info(f"Łączenie z candleLight ({selected_port}) — Nominal {format_bitrate_label(selected_bitrate)}{fd_tag}{lo_tag}...")
+                else:
+                    self.log_info(f"Łączenie z adapterem CANable (slcan) na {selected_port} ({format_bitrate_label(selected_bitrate)}{lo_tag})...")
                 self.save_current_settings_to_config(force=False)
 
                 self.last_can_timestamps.clear()
                 self._unpinned_can_ids.clear()
-                self.worker = CanWorker(selected_port, selected_bitrate, listen_only=listen_only)
+                self.worker = CanWorker(selected_port, selected_bitrate, listen_only=listen_only,
+                                        interface=trans, data_bitrate=data_bitrate, fd=fd_enabled,
+                                        sample_point=sample_point, data_sample_point=data_sample_point)
                 self.worker.frames_received.connect(self.process_received_can_frames)
                 self.worker.error_occurred.connect(self.log_info)
                 self.worker.connection_status.connect(self.handle_connection_status)
@@ -3923,7 +4553,7 @@ class SerialTab(QWidget):
                 self.worker.start()
 
     def handle_connection_status(self, connected: bool):
-        is_can = self.app_config.get("transport") == TRANSPORT_SLCAN
+        is_can = is_can_transport(self.app_config.get("transport"))
         if connected:
             self.btn_connect.setText("Rozłącz")
             self.btn_connect.setStyleSheet("background-color: #fa5252; color: white; font-weight: bold; border: none; padding: 4px 6px;")
@@ -3960,12 +4590,15 @@ class SerialTab(QWidget):
         payload_str = evaluate_dynamic_tokens(payload_str, self.button_counters, scope_id)
 
         marker_text = source_name if show_marker else ""
-        is_can = self.app_config.get("transport") == TRANSPORT_SLCAN
+        is_can = is_can_transport(self.app_config.get("transport"))
 
         if is_can or str(payload_type).upper() == "CAN":
+            can_mode = CAN_MODE_AUTO
+            if 0 <= btn_idx < len(self.app_config.get("buttons", [])):
+                can_mode = self.app_config["buttons"][btn_idx].get("can_mode", CAN_MODE_AUTO)
             try:
-                frame = parse_can_frame(payload_str)
-            except CanFrameError as e:
+                frame = parse_can_frame(payload_str, can_mode=can_mode)
+            except (CanFrameError, Exception) as e:
                 self.log_info(f"Błąd składni ramki CAN ({source_name}): {e}")
                 return
             except Exception as e:
@@ -3999,7 +4632,7 @@ class SerialTab(QWidget):
         text = self.cmd_input.text().strip()
         if text:
             self.cmd_input.add_to_history(text)
-            is_can = self.app_config.get("transport") == TRANSPORT_SLCAN
+            is_can = is_can_transport(self.app_config.get("transport"))
             p_type = "CAN" if is_can else self.combo_cmd_format.currentText()
             self.send_payload(text, source_name="Terminal", payload_type=p_type, btn_idx=-1)
             self.cmd_input.clear()
@@ -4008,28 +4641,28 @@ class SerialTab(QWidget):
         btn_cfg = self.app_config["buttons"][idx]
         is_currently_on = self.button_states[idx]
         payload = btn_cfg.get("tx_off", "") if is_currently_on else btn_cfg.get("tx_on", "")
-        is_can = self.app_config.get("transport") == TRANSPORT_SLCAN
+        is_can = is_can_transport(self.app_config.get("transport"))
         default_ptype = "CAN" if is_can else "ASCII"
         p_type = btn_cfg.get("payload_type") or default_ptype
         self.send_payload(payload, source_name=btn_cfg['name'], show_marker=btn_cfg.get("show_marker", False), payload_type=p_type, btn_idx=idx)
 
     def on_push_clicked(self, idx: int):
         btn_cfg = self.app_config["buttons"][idx]
-        is_can = self.app_config.get("transport") == TRANSPORT_SLCAN
+        is_can = is_can_transport(self.app_config.get("transport"))
         default_ptype = "CAN" if is_can else "ASCII"
         p_type = btn_cfg.get("payload_type") or default_ptype
         self.send_payload(btn_cfg.get("tx", ""), source_name=btn_cfg['name'], show_marker=btn_cfg.get("show_marker", False), payload_type=p_type, btn_idx=idx)
 
     def on_hold_pressed(self, idx: int):
         btn_cfg = self.app_config["buttons"][idx]
-        is_can = self.app_config.get("transport") == TRANSPORT_SLCAN
+        is_can = is_can_transport(self.app_config.get("transport"))
         default_ptype = "CAN" if is_can else "ASCII"
         p_type = btn_cfg.get("payload_type") or default_ptype
         self.send_payload(btn_cfg.get("tx_on", ""), source_name=btn_cfg['name'], show_marker=btn_cfg.get("show_marker", False), payload_type=p_type, btn_idx=idx)
 
     def on_hold_released(self, idx: int):
         btn_cfg = self.app_config["buttons"][idx]
-        is_can = self.app_config.get("transport") == TRANSPORT_SLCAN
+        is_can = is_can_transport(self.app_config.get("transport"))
         default_ptype = "CAN" if is_can else "ASCII"
         p_type = btn_cfg.get("payload_type") or default_ptype
         self.send_payload(btn_cfg.get("tx_off", ""), source_name=btn_cfg['name'], show_marker=btn_cfg.get("show_marker", False), payload_type=p_type, btn_idx=idx)
@@ -4042,7 +4675,7 @@ class SerialTab(QWidget):
         
         self.macro_runners = [r for r in self.macro_runners if r.isRunning()]
         
-        is_can = self.app_config.get("transport") == TRANSPORT_SLCAN
+        is_can = is_can_transport(self.app_config.get("transport"))
         default_ptype = "CAN" if is_can else "ASCII"
         p_type = btn_cfg.get("payload_type") or default_ptype
         runner = MacroRunner(sequence, btn_cfg['name'], btn_cfg.get("show_marker", False), p_type)
@@ -4084,7 +4717,7 @@ class SerialTab(QWidget):
         cfg = self.app_config["buttons"][idx]
         tx = cfg.get("tx", "")
         if tx:
-            is_can = self.app_config.get("transport") == TRANSPORT_SLCAN
+            is_can = is_can_transport(self.app_config.get("transport"))
             default_ptype = "CAN" if is_can else "ASCII"
             p_type = cfg.get("payload_type") or default_ptype
             self.send_payload(tx, source_name=cfg.get('name', ''), show_marker=cfg.get("show_marker", False), payload_type=p_type, btn_idx=idx)
@@ -4121,7 +4754,7 @@ class SerialTab(QWidget):
         tx_raw = btn_cfg.get("tx", "").strip()
         rx_pattern = btn_cfg.get("rx_pattern", "").strip()
         timeout_ms = int(btn_cfg.get("timeout", 1000))
-        is_can = self.app_config.get("transport") == TRANSPORT_SLCAN
+        is_can = is_can_transport(self.app_config.get("transport"))
         default_ptype = "CAN" if is_can else "ASCII"
         p_type = btn_cfg.get("payload_type") or default_ptype
 
@@ -4215,7 +4848,7 @@ class SerialTab(QWidget):
         tx_raw = step.get("tx", "")
         step_label = step.get("label", f"Krok {cur_idx+1}")
 
-        is_can = self.app_config.get("transport") == TRANSPORT_SLCAN
+        is_can = is_can_transport(self.app_config.get("transport"))
         default_ptype = "CAN" if is_can else "ASCII"
         p_type = btn_cfg.get("payload_type") or default_ptype
 

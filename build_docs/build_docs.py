@@ -253,6 +253,76 @@ SLIDES_DATA = [
             "[3] Przycisk '⏹ Stop (N)': Pojawia się w nagłówku panelu akcji przy aktywnych pętlach Trigger i jednym kliknięciem zatrzymuje wszystkie nadające timery.",
             "[4] Pomocnik Liczników {CNT} i Walidator Live: Szybkie wstawianie szablonów ({CNT:00-FF:X}, 0{CNT:0-15:X}), podgląd wygenerowanej ramki w czasie rzeczywistym oraz przycisk automatycznej naprawy składni CAN."
         ]
+    },
+    {
+        "title": "14. Konfigurator Połączenia CAN / CAN FD (Adapter candleLight)",
+        "subtitle": "Niezależna faza arbitrażu i danych BRS, bufor do 64B oraz nasłuch Listen-only",
+        "image_candidates": ["Zrzut_edytor konfiguracji.png", "Zrzut_edytor_konfiguracji.png"],
+        "image_description": (
+            "Zrzut ekranu okna dialogowego 'Edytor Konfiguracji' w zakładce 'Połączenie': "
+            "wybrany typ połączenia 'CAN / CAN FD – candleLight (WinUSB / gs_usb)', "
+            "ustawiony Bitrate CAN (Nominal) na 500k, zaznaczona opcja 'Włącz CAN FD (faza szybkich danych BRS, do 64B)', "
+            "Data Bitrate ustawiony na 500k/2M oraz opcja automatycznego przypinania do Live Watch."
+        ),
+        "annotations": [
+            {"num": 1, "target": (0.50, 0.28), "badge": (0.20, 0.28), "color": "#228be6"},
+            {"num": 2, "target": (0.64, 0.35), "badge": (0.84, 0.35), "color": "#fcc419"},
+            {"num": 3, "target": (0.52, 0.41), "badge": (0.20, 0.41), "color": "#1098ad"},
+            {"num": 4, "target": (0.50, 0.51), "badge": (0.84, 0.51), "color": "#37b24d"},
+        ],
+        "bullets": [
+            "[1] Typ Połączenia candleLight (WinUSB): Natywna obsługa adapterów STM32G4 w przestrzeni użytkownika przez bibliotekę candle-api (protokół gs_usb).",
+            "[2] Prędkość Arbitrażu (Nominal Bitrate): Standardowa prędkość fazy nagłówka i arbitrażu (np. 500 kbps, do 1 Mbps) dla zachowania kompatybilności z węzłami magistrali.",
+            "[3] Szybka Faza Danych CAN FD (Data Bitrate): Aktywacja ramki do 64 bajtów oraz prędkości BRS do 2 Mbps, 4 Mbps lub 5 Mbps w fazie przesyłu danych.",
+            "[4] Opcje Nasłuchu i Telemetria: Tryb Listen-only (brak nadawania ramek ACK) oraz automatyczne przechwytywanie i przypinanie każdego nowego identyfikatora do panelu Live Watch."
+        ]
+    },
+    {
+        "title": "15. Konfigurator Przycisku CAN / CAN FD i Szablony Ramek",
+        "subtitle": "Wybór standardu (Classic / FD / TLV), pomocnik liczników {CNT} i weryfikacja poprawności",
+        "image_candidates": ["Zrzut_edytor_konfiguracji_przycisku_push.png"],
+        "image_description": (
+            "Zrzut ekranu okna dialogowego edycji przycisku 'ButtonEditDialog' w trybie CAN: "
+            "wybór standardu 'Standard CAN: Auto (ze składni / długości)', "
+            "widoczne kafelki szablonów '🚗 Szablon CAN 2.0 (8B)', '⚡ Szablon CAN FD (64B)', '📦 Szablon TLV (64B)', '🔄 Konwertuj do trybu', "
+            "pole TX z ramką '7DF#02A000' oraz zielony podgląd walidatora ramki."
+        ),
+        "annotations": [
+            {"num": 1, "target": (0.50, 0.28), "badge": (0.78, 0.28), "color": "#228be6"},
+            {"num": 2, "target": (0.45, 0.55), "badge": (0.16, 0.55), "color": "#d97706"},
+            {"num": 3, "target": (0.35, 0.61), "badge": (0.80, 0.61), "color": "#fcc419"},
+            {"num": 4, "target": (0.45, 0.90), "badge": (0.16, 0.90), "color": "#37b24d"},
+        ],
+        "bullets": [
+            "[1] Wybór Standardu Ramki CAN: Niezależne wymuszenie formatu dla każdego kafelka: Auto, Klasyczny CAN 2.0 (maks. 8B), CAN FD z BRS (do 64B), CAN FD bez BRS lub Struktura TLV.",
+            "[2] Szablony Ramek i Konwerter Formatu: Błyskawiczne wstawianie gotowych wzorców (8B CAN 2.0, 64B CAN FD, TLV) oraz konwersja istniejącego payloadu do wybranego standardu.",
+            "[3] Składnia Nadawcza cansend i Liczniki {CNT}: Standardowy format ID#DANE z opcją wstrzykiwania dynamicznych liczników kroczących {CNT:00-FF:X} (1B) lub 0{CNT:0-15:X} (półbajt).",
+            "[4] Walidacja Live i Ochrona Standardu: Sprawdzanie poprawności składni, blokada nadmiarowych bajtów w trybie CAN 2.0 z inteligentnym przyciskiem automatycznej naprawy."
+        ]
+    },
+    {
+        "title": "16. Tryb Magistrali CAN FD, Protokół candleLight i Kreator TLV",
+        "subtitle": "Obsługa CAN FD do 64B, Bit Rate Switch (BRS), binarna struktura TLV i kreator nadawania",
+        "image_candidates": ["zrzut_can_fd_tlv.png", "zrzut_can_fd.png"],
+        "image_description": (
+            "Zrzut ekranu przedstawiający kartę pracującą w trybie candleLight CAN FD: "
+            "w nagłówku etykieta 'Nominal: 500k', na dolnym pasku widoczny zielony przycisk '📦 TLV / CAN FD' "
+            "oraz otwarte okno dialogowe 'CanFdTxDialog' (Kreator i Nadajnik Ramek CAN FD / TLV) "
+            "z wybraną strukturą TLV (Typ: 0xA5, Wartość: 'SerialCommander...'), podglądem ramki 64B "
+            "oraz konsolą logów z odebraną ramką rozkodowaną jako TLV."
+        ),
+        "annotations": [
+            {"num": 1, "target": (0.48, 0.11), "badge": (0.48, 0.04), "color": "#228be6"},
+            {"num": 2, "target": (0.83, 0.97), "badge": (0.83, 0.89), "color": "#2b8a3e"},
+            {"num": 3, "target": (0.58, 0.74), "badge": (0.24, 0.74), "color": "#fcc419"},
+            {"num": 4, "target": (0.45, 0.24), "badge": (0.16, 0.24), "color": "#37b24d"},
+        ],
+        "bullets": [
+            "[1] Tryb candleLight na Żywo: Aktywna karta CAN FD z bezpośrednim wskaźnikiem prędkości arbitrażu (Nominal: 500k) i podłączonym adapterem USB (WinUSB).",
+            "[2] Przycisk Nadajnika (📦 TLV / CAN FD): Szybki dostęp do interaktywnego kreatora umieszczony bezpośrednio obok konsoli wprowadzania komend.",
+            "[3] Kreator Ramek CAN FD / TLV: Konfiguracja ID, flag FD/BRS, automatyczne pakowanie w strukturę ot_app_msg_tlv (<BH) oraz nadawanie jednorazowe i cykliczne (z okresem ms).",
+            "[4] Telemetria Live Watch i Dekodowanie TLV: Błyskawiczny podgląd zdekodowanych pól TLV w konsoli, podświetlanie zmienionych danych i pomiar czasu cyklu Δt z dokładnością do ms."
+        ]
     }
 ]
 
