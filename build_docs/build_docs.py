@@ -336,10 +336,10 @@ SLIDES_DATA = [
             "i odpowiedzi Nucleo '[CAN_UART] ... -> CAN1 OK' (zielona) oraz przykładowa linia '[CAN_UART] ERR: ...' (czerwona)."
         ),
         "annotations": [
-            {"num": 1, "target": (0.08, 0.97), "badge": (0.08, 0.89), "color": "#228be6"},
-            {"num": 2, "target": (0.40, 0.97), "badge": (0.40, 0.89), "color": "#fcc419"},
-            {"num": 3, "target": (0.80, 0.97), "badge": (0.80, 0.89), "color": "#2b8a3e"},
-            {"num": 4, "target": (0.45, 0.60), "badge": (0.16, 0.60), "color": "#37b24d"},
+            {"num": 1, "target": (0.04, 0.97), "badge": (0.04, 0.88), "color": "#228be6"},
+            {"num": 2, "target": (0.40, 0.97), "badge": (0.40, 0.88), "color": "#fcc419"},
+            {"num": 3, "target": (0.67, 0.97), "badge": (0.62, 0.97), "color": "#2b8a3e"},
+            {"num": 4, "target": (0.50, 0.40), "badge": (0.64, 0.40), "color": "#37b24d"},
         ],
         "bullets": [
             "[1] Pole ID hex: 3 cyfry = 11-bit, 8 cyfr = 29-bit. Puste ID = pole danych jako pełne polecenie (CFG?, 321##1#01 02).",

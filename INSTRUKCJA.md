@@ -759,6 +759,8 @@ zwykłą kartą typu **Serial (UART)** – nie jest potrzebny adapter CAN ani bi
 Serial Commander ──COM (VCP, 115200 8N1, CRLF)──► Nucleo (USART2) ──► CAN1 / CAN2
 ```
 
+![Most UART → CAN i menu 🚌](build_docs/zrzut_uart_can_bridge.png)
+
 Tryb `UART→CAN` zwalnia z pamiętania składni poleceń: wpisujesz tylko **ID** i **dane**, a aplikacja sama
 składa linię (np. `CAN1:321##1#01 02 03`), sprawdza ją i wysyła.
 
