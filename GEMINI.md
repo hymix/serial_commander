@@ -169,3 +169,11 @@ Oparte na systemie Qt Style Sheets (QSS) dynamicznie generowanym w `get_btn_styl
 *   **Refaktoryzacja gui.py:** Plik osiągnął ponad 3300 linii kodu (tzw. monolith). Należy rozważyć podzielenie go na strukturę modułową w podfolderach (np. `components/` dla kontrolek i paneli, `dialogs/` dla okien modalnych, `workers/` dla wątków pobocznych `SerialWorker` i `MacroRunner`).
 *   **Dodatkowa walidacja HEX:** Makra i przyciski wysyłają obecnie kod przy cichej akceptacji ewentualnych błędów. Przydałby się szerszy system raportowania błędów parsowania komend użytkownikowi (aby nie ignorować błędów wprowadzania za pomocą gołego bloku `except Exception as e: pass`).
 *   **Rozszerzenie makr:** Warto dodać funkcjonalność pętli dla makr (np. `loop(5)`) i wsparcie dla warunkowego czekania na odpowiedź (np. `wait_for(ACK_HEX, timeout)`), co stworzyłoby kompletny język skryptowy testowania HMI.
+
+## 6. Most UART → CAN (Nucleo `can_uart_bridge`) – zasady (v1.10.0)
+*   W profilu `TRANSPORT_SERIAL` ramki CAN wysyłane są jako **linie tekstu ASCII + CRLF** przez `SerialWorker` do płytki Nucleo – bez `CanWorker` i `python-can`. Typ payloadu: `PAYLOAD_UART_CAN` (`"UART_CAN"`, etykieta `"UART→CAN"`).
+*   Każda linia jest składana i walidowana przez `build_uart_can_line(text, bus, can_mode)` z `can_support.py` (wewnętrznie `parse_can_frame()`), z prefiksem `CANn:` i flagami FD/BRS w samej linii. Nie wysyłaj `BUS#` / `MODE#` w tle – stan Nucleo resetuje się niezależnie od GUI.
+*   Polecenia sterujące (`CFG#..`, `CFG?`, `BUS#n`, `MODE#..`, `HELP`) przechodzą bez zmian (`is_uart_can_control_command`). Dozwolone są tylko znaki ASCII 0x20–0x7E, maks. 255 znaków.
+*   Ustawienia mostu w profilu: klucz `uart_can_bridge`, normalizowany przez `normalize_uart_can_settings()`; w `SerialTab` zawsze czytaj przez `get_uart_can_settings()` (normalizacja w miejscu).
+*   ACK toggle w formacie `UART→CAN` porównywany jest dosłownie z tekstem odpowiedzi Nucleo (jak ASCII), odpowiedź Query przez `fnmatch`.
+*   Test bez sprzętu: `python tests/test_uart_can_bridge.py`.

@@ -1,4 +1,4 @@
-# Serial Commander v1.9.0 — Dokumentacja i Instrukcja Obsługi
+# Serial Commander v1.10.0 — Dokumentacja i Instrukcja Obsługi
 
 
 
@@ -746,3 +746,101 @@ Aplikacja rygorystycznie dostosowuje widoczność i zachowanie kontrolek w zale�
    * Dla klasycznego CAN 2.0 (np. 500 kbps) można stosować zarówno **80.0%** jak i **87.5%** w zależności od wymagań zewnętrznego analizatora lub sieci pojazdu.
 3. **Praca w Czystym Trybie Klasycznym CAN 2.0:**
    * Jeśli urządzenie candleLight ma komunikować się ze starszymi węzłami nieobsługującymi CAN FD, w oknie edycji profilu (ConfigEditDialog) wystarczy **odznaczyć** pole wyboru Włącz CAN FD. Adapter zostanie wówczas zainicjalizowany w czystym standardzie CAN 2.0 (blokada bitu FD na kontrolerze).
+
+---
+
+## 12. Most UART → CAN (Płytka Nucleo, Firmware `can_uart_bridge`)
+
+Płytka Nucleo z firmware `can_uart_bridge` nadaje ramki CAN / CAN FD na **CAN1** lub **CAN2** na podstawie
+jednej linii tekstu odebranej przez UART (VCP ST-LINK, 115200 8N1, CRLF). Serial Commander łączy się z nią
+zwykłą kartą typu **Serial (UART)** – nie jest potrzebny adapter CAN ani biblioteka `python-can`.
+
+```text
+Serial Commander ──COM (VCP, 115200 8N1, CRLF)──► Nucleo (USART2) ──► CAN1 / CAN2
+```
+
+Tryb `UART→CAN` zwalnia z pamiętania składni poleceń: wpisujesz tylko **ID** i **dane**, a aplikacja sama
+składa linię (np. `CAN1:321##1#01 02 03`), sprawdza ją i wysyła.
+
+### Przycisk `🚌` na Dolnym Pasku
+
+W profilu *Serial* obok przycisku `Wyślij ➤` znajduje się przycisk-menu `🚌 CAN`. Menu zawiera:
+
+| Pozycja | Działanie |
+|---|---|
+| **Tryb UART→CAN** | Włącza pola `ID hex` + dane. Etykieta przycisku zmienia się na zieloną, np. `🚌 CAN1 FD+BRS`. |
+| **Magistrala** → `CAN1` / `CAN2` | Prefiks `CAN1:` / `CAN2:` doklejany do każdej ramki. |
+| **Standard ramki** | `Auto` (ze składni i długości), `Klasyczny CAN 2.0`, `CAN FD z BRS`, `CAN FD bez BRS`, `TLV`. Flagi są wpisywane w samą linię (`##1#`, `##0#`, `TLV#`), więc nie trzeba wysyłać `MODE#`. |
+| **⚙ Konfiguracja magistrali (CFG#)...** | Dialog wyboru trybu i prędkości magistrali; wysyła `CFG#<bus>#<tryb>#<nominal>[#<data>]`. |
+| **📦 Kreator ramki CAN FD / TLV...** | Kreator z osobnymi polami ID, flag FD/BRS, TLV i danych; nadawanie jednorazowe lub cykliczne (min. 50 ms). |
+| **❓ Odczytaj konfigurację (CFG?)** | Stan obu magistral, liczniki błędów i UART. |
+| **📖 Pomoc mostu (HELP)** | Skrócona składnia z firmware. |
+
+Ustawienia mostu są zapisywane w profilu (`cfg/*.json`, klucz `uart_can_bridge`), łącznie z ostatnio użytym ID.
+
+### Wysyłanie Ramki: Pola ID i Dane
+
+Po włączeniu trybu na pasku pojawiają się dwa pola: **`ID hex`** (wąskie, po lewej) i **dane**.
+Enter w dowolnym z nich wysyła ramkę. Pole ID nie jest czyszczone, więc kolejne ramki z tym samym ID wpisujesz
+tylko w polu danych (strzałki `↑` / `↓` przywołują historię danych).
+
+| ID | Dane | Standard | Linia wysłana do Nucleo |
+|---|---|---|---|
+| `321` | `01 02 03` | Auto | `CAN1:321#01 02 03` |
+| `321` | `01 02 03` | CAN FD z BRS | `CAN1:321##1#01 02 03` |
+| `18DAF110` | `11 22` | CAN FD bez BRS | `CAN1:18DAF110##0#11 22` |
+| `321` | `01 02 … 0C` (12 B) | Auto | `CAN1:321##1#01 02 … 0C` (FD+BRS automatycznie) |
+| `65A` | `R4` | Auto | `CAN1:65A#R4` (RTR) |
+| `321` | `Hello` | TLV | `CAN1:TLV#321#0xA5#Hello` |
+| *(puste)* | `CFG?` | – | `CFG?` (polecenie sterujące bez zmian) |
+| *(puste)* | `CAN2:187#01` | – | `CAN2:187#01` (prefiks w tekście ma pierwszeństwo) |
+
+* **Podgląd na żywo:** dymek nad polem danych pokazuje linię, która trafi do Nucleo (`➜ Nucleo: CAN1:...`).
+* **Walidacja przed wysłaniem:** błędne ID lub dane (np. nieparzysta liczba cyfr hex, 9 B w trybie Classic,
+  znaki spoza ASCII) są oznaczane czerwoną ramką. Po Enterze w konsoli pojawia się opis błędu, nic nie jest
+  wysyłane, a wpisany tekst zostaje do poprawy.
+* Linia jest zawsze wysyłana jako **ASCII + CRLF** – w trybie `UART→CAN` wybór `ASCII/HEX` i `EOL` jest ukryty.
+
+### Konfiguracja Magistrali (CFG#)
+
+Dialog `⚙ Konfiguracja magistrali` składa polecenie z list wyboru:
+
+* **Magistrala:** `CAN1` / `CAN2`,
+* **Tryb:** `Classic CAN 2.0`, `CAN FD bez BRS`, `CAN FD + BRS`,
+* **Nominal:** `125k`, `250k`, `500k`, `1M`,
+* **Data (BRS):** `1M`, `2M`, `4M`, `8M` (aktywne tylko dla `CAN FD + BRS`).
+
+Przykład: `CAN1`, `CAN FD + BRS`, `500k`, `2M` → `CFG#1#FD_BRS#500k#2M`. Po wysłaniu ustaw tę samą konfigurację
+w adapterze CAN po stronie PC (np. w drugiej karcie z candleLight). Ustawienie z UART obowiązuje do resetu Nucleo
+albo wyboru profilu parsera w firmware.
+
+### Odpowiedzi Nucleo w Konsoli
+
+Most odpowiada trzema liniami na każdą ramkę. Aplikacja koloruje je automatycznie (o ile żaden filtr
+użytkownika nie nadaje własnego koloru):
+
+```text
+[CAN_UART] Polecenie: CAN1:321##1#01 02 03
+[CAN_UART] Ramka: 321 [3] [FD+BRS] 01 02 03
+[CAN_UART] Rozmiar: 3B (FD: True, BRS: True) -> CAN1 OK        ← zielony
+[CAN_UART] ERR: CAN1 pracuje w trybie Classic - ramka FD odrzucona (CFG#1#FD_BRS#500k#2M)   ← czerwony
+```
+
+`OK` oznacza przyjęcie ramki do kolejki TX Nucleo. Błędy sprzętowe (brak ACK, bus-off) widać w `CFG?`.
+Most nie przekazuje ramek odebranych z magistrali – do podglądu ruchu użyj osobnej karty z adapterem CAN.
+
+### Przyciski Szybkich Akcji w Formacie `UART→CAN`
+
+W profilu *Serial* pole **Format TX** w edytorze przycisku ma trzecią opcję: `UART→CAN`. Po jej wybraniu:
+
+* dostępne jest pole **Standard CAN** (wszystkie tryby, łącznie z CAN FD i TLV) oraz szablony ramek,
+* podgląd pokazuje linię UART, np. `➜ Linia UART do Nucleo: CAN1:187##0#01`,
+* w polach TX można używać poleceń sterujących (`CFG#1#CLASSIC#500k`, `CFG?`) i liczników `{CNT}`,
+* **ACK przycisku toggle** to dosłowny fragment odpowiedzi Nucleo, np. `187 [1] 01` (z linii `Ramka:`),
+* **odpowiedź Query** to wzorzec `fnmatch`, np. `*CAN1 OK*` lub `*ERR*`.
+
+Magistrala (`CAN1` / `CAN2`) przycisków wynika z ustawienia na pasku, chyba że TX zawiera własny prefiks `CANn:`.
+
+> **Tempo wysyłania:** odpowiedź Nucleo jest dłuższa od polecenia. Przy ciągłym strumieniu bez przerw bufor RX
+> płytki (512 B) może się przepełnić (`WARN: przepełnienie bufora RX UART`). Dla przycisków trigger i nadawania
+> cyklicznego stosuj interwał co najmniej 50 ms.

@@ -2,6 +2,32 @@
 
 Wszystkie znaczące zmiany w tym projekcie będą udokumentowane w tym pliku.
 
+## [1.10.0] - 2026-10-23
+
+### Added
+- **Most UART → CAN (płytka Nucleo z firmware `can_uart_bridge`) w profilu Serial (UART):**
+  - Nowy przycisk-menu `🚌` na dolnym pasku obok `Wyślij ➤` (tylko transport *Serial*). Etykieta pokazuje bieżący stan, np. `🚌 CAN1 FD+BRS`.
+  - Tryb `UART→CAN`: dwa pola – `ID hex` i dane – zamiast znajomości składni poleceń. Aplikacja składa linię (np. `CAN1:321##1#01 02 03`), waliduje ją lokalnie przez `parse_can_frame()` (ten sam algorytm co w firmware) i wysyła jako ASCII + CRLF przez `SerialWorker`.
+  - Wybór magistrali (`CAN1` / `CAN2`, prefiks `CANn:`) i standardu ramki (`Auto`, `Classic`, `FD+BRS`, `FD bez BRS`, `TLV`) z menu – bez wysyłania `BUS#` / `MODE#`, więc stan GUI nie rozjeżdża się z Nucleo po jego resecie.
+  - Puste pole ID: pole danych traktowane jest jako pełne polecenie (`CFG?`, `321##1#01 02`, `TLV#321#0xA5#Tekst`).
+  - Podgląd na żywo: dymek pola danych pokazuje linię wysyłaną do Nucleo, błędna ramka / ID oznaczane są czerwoną ramką. Błędna ramka nie jest wysyłana, a wpisany tekst zostaje do poprawy.
+  - Dialog `⚙ Konfiguracja magistrali (CFG#)` (`UartCanCfgDialog`): magistrala, tryb (Classic / FD / FD+BRS), prędkość nominalna (125k–1M) i danych (1M–8M) z podglądem polecenia `CFG#1#FD_BRS#500k#2M`.
+  - Szybkie polecenia z menu: `❓ CFG?` oraz `📖 HELP`.
+  - Kreator `📦 Kreator ramki CAN FD / TLV` (`CanFdTxDialog(bridge=True)`) wysyła ramki przez most (min. interwał cykliczny 50 ms – ochrona bufora RX Nucleo).
+- **Format TX `UART→CAN` w edytorze przycisków (profil Serial):** wszystkie typy przycisków (push, toggle, hold, trigger, macro, query, step) mogą nadawać ramki CAN przez most, z wyborem standardu ramki, szablonami CAN / CAN FD / TLV i podglądem linii UART. ACK toggle i odpowiedź Query porównywane są z tekstem odpowiedzi Nucleo (np. `187 [1] 01`, `*CAN1 OK*`).
+- **Kolorowanie odpowiedzi mostu w konsoli:** linie `[CAN_UART] ... OK` na zielono, `ERR:` na czerwono, `WARN` na pomarańczowo (gdy żaden filtr użytkownika nie nadaje koloru).
+- Nowy klucz profilu `uart_can_bridge` (`enabled`, `bus`, `frame_mode`, `cfg_mode`, `nominal`, `data`, `last_id`) z domyślnymi wartościami w `get_default_config()` i fallbackiem w `load_config()`.
+- Funkcje mostu w `can_support.py`: `build_uart_can_line()`, `build_uart_can_cfg_line()`, `compose_uart_can_text()`, `format_can_frame_text()`, `is_uart_can_control_command()`, `normalize_uart_can_settings()`.
+- Test bez sprzętu `tests/test_uart_can_bridge.py` (round-trip linii przez `parse_can_frame()`, błędy składni, polecenia sterujące).
+
+### Changed
+- `send_payload()` zwraca `False`, gdy nic nie zostało wysłane (brak połączenia lub błąd składni ramki).
+- Instrukcja (`INSTRUKCJA.md`, rozdział 12) oraz generator dokumentacji (slajd 17) opisują most UART → CAN.
+
+### Fixed
+- **Konsola zachowuje wielokrotne spacje:** linie RX / TX (`log_rx()`, `log_tx()`) oraz wiersze panelu Watch (`render_html()`) są renderowane z `white-space: pre-wrap`, więc tabele wyrównane spacjami (np. `IO_HELP` z V-BOX, `ADC: %4lu`) nie rozjeżdżają się. Długie linie nadal się zawijają, a zapis logów (TXT / HTML / MD) zachowuje spacje.
+- `log_tx()` escapuje wysyłany tekst i nazwę markera – komendy ze znakami `<`, `>`, `&` (np. `ZRODLO#<UART|IO>`) są widoczne w całości zamiast znikać jako znaczniki HTML.
+
 ## [1.9.0] - 2026-10-19
 
 ### Added

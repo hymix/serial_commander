@@ -33,6 +33,7 @@ REQUIRED_SCREENSHOTS = {
     "Slajd 14 (Konfiguracja Profilu CAN FD)": ["Zrzut_edytor konfiguracji.png", "Zrzut_edytor_konfiguracji.png"],
     "Slajd 15 (Edycja Przycisku CAN FD i Szablony)": ["Zrzut_edytor_konfiguracji_przycisku_push.png"],
     "Slajd 16 (Tryb CAN FD i Kreator TLV)": ["zrzut_can_fd_tlv.png", "zrzut_can_fd.png"],
+    "Slajd 17 (Most UART -> CAN, Nucleo)": ["zrzut_uart_can_bridge.png"],
 }
 
 def cleanup_screenshots():

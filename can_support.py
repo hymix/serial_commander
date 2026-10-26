@@ -606,6 +606,174 @@ def can_id_sort_key(id_text: str):
 
 
 # ==========================================
+# MOST UART -> CAN (Nucleo, firmware can_uart_bridge)
+# ==========================================
+# Serial Commander wysyła przez port COM linie tekstu ASCII (CRLF), a płytka Nucleo nadaje
+# z nich ramki na CAN1 / CAN2. Składnia ramek jest identyczna z parse_can_frame().
+PAYLOAD_UART_CAN = "UART_CAN"
+UART_CAN_PAYLOAD_LABEL = "UART→CAN"
+
+UART_CAN_BUSES = (1, 2)
+UART_CAN_CFG_MODES: List[Tuple[str, str]] = [
+    ("CLASSIC", "Classic CAN 2.0"),
+    ("FD", "CAN FD bez BRS"),
+    ("FD_BRS", "CAN FD + BRS"),
+]
+# Prędkości z macierzy testowej mostu (zegar FDCAN 144 MHz)
+UART_CAN_NOMINAL_RATES = ["125k", "250k", "500k", "1M"]
+UART_CAN_DATA_RATES = ["1M", "2M", "4M", "8M"]
+UART_CAN_MAX_LINE = 255
+
+UART_CAN_FRAME_MODE_SHORT = {
+    CAN_MODE_AUTO: "Auto",
+    CAN_MODE_CLASSIC: "Classic",
+    CAN_MODE_FD_BRS: "FD+BRS",
+    CAN_MODE_FD_NO_BRS: "FD",
+    CAN_MODE_TLV: "TLV",
+}
+
+_UART_CAN_CONTROL_RE = re.compile(r'^(?:(?:CFG|BUS|MODE)\s*[#?]|HELP\s*$)', re.IGNORECASE)
+_UART_CAN_BUS_PREFIX_RE = re.compile(r'^CAN([12])\s*:\s*', re.IGNORECASE)
+
+
+def default_uart_can_settings() -> dict:
+    """Domyślne ustawienia mostu UART->CAN zapisywane w profilu pod kluczem 'uart_can_bridge'."""
+    return {
+        "enabled": False,
+        "bus": 1,
+        "frame_mode": CAN_MODE_AUTO,
+        "cfg_mode": "FD_BRS",
+        "nominal": "500k",
+        "data": "2M",
+        "last_id": "",
+    }
+
+
+def normalize_uart_can_settings(settings) -> dict:
+    """Uzupełnia brakujące / niepoprawne pola ustawień mostu wartościami domyślnymi."""
+    res = default_uart_can_settings()
+    if not isinstance(settings, dict):
+        return res
+    res["enabled"] = bool(settings.get("enabled", res["enabled"]))
+    try:
+        bus = int(settings.get("bus", res["bus"]))
+    except (TypeError, ValueError):
+        bus = res["bus"]
+    res["bus"] = bus if bus in UART_CAN_BUSES else 1
+    mode = str(settings.get("frame_mode", res["frame_mode"])).lower()
+    res["frame_mode"] = mode if mode in UART_CAN_FRAME_MODE_SHORT else CAN_MODE_AUTO
+    cfg_mode = str(settings.get("cfg_mode", res["cfg_mode"])).upper()
+    res["cfg_mode"] = cfg_mode if cfg_mode in [m for m, _ in UART_CAN_CFG_MODES] else res["cfg_mode"]
+    nominal = str(settings.get("nominal", res["nominal"]))
+    res["nominal"] = nominal if nominal in UART_CAN_NOMINAL_RATES else res["nominal"]
+    data = str(settings.get("data", res["data"]))
+    res["data"] = data if data in UART_CAN_DATA_RATES else res["data"]
+    res["last_id"] = str(settings.get("last_id", "") or "")
+    return res
+
+
+def uart_can_settings_label(settings: dict) -> str:
+    """Krótka etykieta przycisku mostu, np. 'CAN1 FD+BRS'."""
+    s = normalize_uart_can_settings(settings)
+    return f"CAN{s['bus']} {UART_CAN_FRAME_MODE_SHORT.get(s['frame_mode'], 'Auto')}"
+
+
+def is_uart_can_control_command(text: str) -> bool:
+    """True dla poleceń sterujących mostem (CFG#.., CFG?, BUS#n, BUS?, MODE#.., MODE?, HELP)."""
+    return bool(text) and bool(_UART_CAN_CONTROL_RE.match(text.strip()))
+
+
+def build_uart_can_cfg_line(bus: int, cfg_mode: str, nominal: str, data: str = "") -> str:
+    """Składa polecenie konfiguracji magistrali, np. 'CFG#1#FD_BRS#500k#2M' lub 'CFG#2#CLASSIC#250k'."""
+    mode = str(cfg_mode).upper()
+    if int(bus) not in UART_CAN_BUSES:
+        raise CanFrameError(f"nieprawidłowa magistrala CAN{bus} (dozwolone CAN1, CAN2)")
+    if mode not in [m for m, _ in UART_CAN_CFG_MODES]:
+        raise CanFrameError(f"nieprawidłowy tryb magistrali '{cfg_mode}' (CLASSIC, FD, FD_BRS)")
+    if mode == "FD_BRS":
+        if not data:
+            raise CanFrameError("tryb FD_BRS wymaga prędkości fazy danych")
+        return f"CFG#{int(bus)}#{mode}#{nominal}#{data}"
+    return f"CFG#{int(bus)}#{mode}#{nominal}"
+
+
+def compose_uart_can_text(id_text: str, payload_text: str, can_mode: str = CAN_MODE_AUTO) -> str:
+    """
+    Składa tekst ramki z dwóch pól GUI (ID i dane):
+        ('321', '01 02 03')   -> '321#01 02 03'
+        ('321', 'R4')         -> '321#R4'
+        ('321', 'Hello')      -> 'TLV#321#0xA5#Hello'   (tylko w trybie TLV, gdy dane nie są hex)
+    Puste ID oznacza, że pole danych zawiera pełne polecenie (np. 'CFG?', '321##1#01 02').
+    """
+    id_s = (id_text or "").strip()
+    payload = (payload_text or "").strip()
+    if not id_s:
+        return payload
+    if str(can_mode).lower() == CAN_MODE_TLV:
+        compact = re.sub(r'[\s.:_\-]', '', payload)
+        if compact and not _HEX_RE.match(compact):
+            return f"TLV#{id_s}#0xA5#{payload}"
+    return f"{id_s}#{payload}"
+
+
+def format_can_frame_text(frame: CanFrame) -> str:
+    """
+    Kanoniczna postać tekstowa ramki dla mostu (zgodna z parse_can_frame po stronie firmware):
+        '187#01 02 03', '321##1#01 02 03', '321##0#01 02', '65A#R4', 'TLV#321#0xA5#hex:48 65'
+    """
+    fid = frame.id_str()
+    if frame.is_remote:
+        return f"{fid}#R{frame.dlc}" if frame.dlc else f"{fid}#R"
+    data = frame.data_str(" ")
+    if frame.is_fd:
+        if frame.bitrate_switch and len(frame.data) == MAX_FD_DLC:
+            tlv, valid = OtAppMsgTlv.unpack(frame.data)
+            packed = tlv.pack(pad_to_length=MAX_FD_DLC) if valid else b""
+            # Bajty identyczne jak spakowane TLV -> zapis TLV# (czytelny log po stronie Nucleo)
+            if valid and tlv.value and packed == frame.data:
+                value_hex = tlv.value.hex(" ").upper()
+                return f"TLV#{fid}#0x{tlv.msg_type:02X}#hex:{value_hex}"
+        return f"{fid}##{'1' if frame.bitrate_switch else '0'}#{data}"
+    return f"{fid}#{data}"
+
+
+def build_uart_can_line(text: str, bus: int = 1, can_mode: str = CAN_MODE_AUTO) -> Tuple[str, Optional[CanFrame]]:
+    """
+    Zamienia tekst wpisany przez użytkownika na linię polecenia mostu UART->CAN.
+      * polecenia sterujące (CFG, BUS, MODE, HELP) przechodzą bez zmian, frame = None,
+      * ramka jest walidowana przez parse_can_frame(can_mode) i zapisywana kanonicznie
+        z prefiksem magistrali, np. 'CAN1:321##1#01 02 03'.
+    Prefiks 'CAN1:' / 'CAN2:' wpisany w tekście ma pierwszeństwo przed parametrem bus.
+    Rzuca CanFrameError przy błędzie składni lub zbyt długiej linii.
+    """
+    s = (text or "").strip()
+    if not s:
+        raise CanFrameError("pusta ramka")
+    bad_chars = sorted({ch for ch in s if not (0x20 <= ord(ch) <= 0x7E)})
+    if bad_chars:
+        raise CanFrameError(f"most UART->CAN przyjmuje tylko znaki ASCII 0x20–0x7E (niedozwolone: {''.join(bad_chars)!r})")
+    if is_uart_can_control_command(s):
+        return s, None
+
+    m = _UART_CAN_BUS_PREFIX_RE.match(s)
+    if m:
+        bus = int(m.group(1))
+        s = s[m.end():]
+    if int(bus) not in UART_CAN_BUSES:
+        raise CanFrameError(f"nieprawidłowa magistrala CAN{bus} (dozwolone CAN1, CAN2)")
+
+    frame = parse_can_frame(s, can_mode=can_mode)
+    if s.upper().startswith("TLV#") and frame.bitrate_switch:
+        body = s  # zapis TLV wpisany przez użytkownika jest czytelniejszy niż hex:
+    else:
+        body = format_can_frame_text(frame)
+    line = f"CAN{int(bus)}:{body}"
+    if len(line) > UART_CAN_MAX_LINE:
+        raise CanFrameError(f"linia za długa ({len(line)} znaków, maks. {UART_CAN_MAX_LINE})")
+    return line, frame
+
+
+# ==========================================
 # KONWERSJA python-can <-> CanFrame
 # ==========================================
 def frame_to_can_message(frame: CanFrame):

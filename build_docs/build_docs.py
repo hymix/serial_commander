@@ -323,6 +323,30 @@ SLIDES_DATA = [
             "[3] Kreator Ramek CAN FD / TLV: Konfiguracja ID, flag FD/BRS, automatyczne pakowanie w strukturę ot_app_msg_tlv (<BH) oraz nadawanie jednorazowe i cykliczne (z okresem ms).",
             "[4] Telemetria Live Watch i Dekodowanie TLV: Błyskawiczny podgląd zdekodowanych pól TLV w konsoli, podświetlanie zmienionych danych i pomiar czasu cyklu Δt z dokładnością do ms."
         ]
+    },
+    {
+        "title": "17. Most UART → CAN (Nucleo can_uart_bridge)",
+        "subtitle": "Ramki CAN / CAN FD przez port COM: pola ID + dane, wybór magistrali i standardu, konfiguracja CFG#",
+        "image_candidates": ["zrzut_uart_can_bridge.png"],
+        "image_description": (
+            "Zrzut ekranu karty w profilu Serial (UART) połączonej z płytką Nucleo (np. COM22, 115200): "
+            "na dolnym pasku widoczne pole 'ID hex' z wartością 321, pole danych z '01 02 03' oraz zielony przycisk "
+            "'🚌 CAN1 FD+BRS' z ROZWINIĘTYM menu (zaznaczony 'Tryb UART→CAN', widoczne podmenu Magistrala / Standard ramki, "
+            "'⚙ Konfiguracja magistrali (CFG#)...', 'CFG?', 'HELP'). W konsoli powyżej: linia TX 'CAN1:321##1#01 02 03' "
+            "i odpowiedzi Nucleo '[CAN_UART] ... -> CAN1 OK' (zielona) oraz przykładowa linia '[CAN_UART] ERR: ...' (czerwona)."
+        ),
+        "annotations": [
+            {"num": 1, "target": (0.08, 0.97), "badge": (0.08, 0.89), "color": "#228be6"},
+            {"num": 2, "target": (0.40, 0.97), "badge": (0.40, 0.89), "color": "#fcc419"},
+            {"num": 3, "target": (0.80, 0.97), "badge": (0.80, 0.89), "color": "#2b8a3e"},
+            {"num": 4, "target": (0.45, 0.60), "badge": (0.16, 0.60), "color": "#37b24d"},
+        ],
+        "bullets": [
+            "[1] Pole ID hex: 3 cyfry = 11-bit, 8 cyfr = 29-bit. Puste ID = pole danych jako pełne polecenie (CFG?, 321##1#01 02).",
+            "[2] Pole danych: bajty hex (lub tekst w trybie TLV). Dymek pokazuje linię wysyłaną do Nucleo, błąd = czerwona ramka i brak wysyłki.",
+            "[3] Przycisk 🚌: tryb UART→CAN, magistrala CAN1/CAN2, standard ramki (Auto/Classic/FD+BRS/FD/TLV), dialog CFG#, kreator ramek, CFG? i HELP.",
+            "[4] Odpowiedzi mostu w konsoli: '-> CAN1 OK' na zielono, 'ERR:' na czerwono, 'WARN' na pomarańczowo."
+        ]
     }
 ]
 

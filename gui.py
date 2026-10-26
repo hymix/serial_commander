@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (QTableWidget, QTableWidgetItem, QAbstractItemView, 
                              QScrollArea, QDialog, QFormLayout, QDialogButtonBox, QCheckBox, 
                              QInputDialog, QSpinBox, QFileDialog, QMenu, QFrame, QSizePolicy)
 from PyQt6.QtCore import QThread, pyqtSignal, Qt, QSize, QTimer
-from PyQt6.QtGui import QIcon, QPixmap, QColor, QTextDocument, QTextCursor, QShortcut, QKeySequence, QAction, QFont
+from PyQt6.QtGui import QIcon, QPixmap, QColor, QTextDocument, QTextCursor, QShortcut, QKeySequence, QAction, QActionGroup, QFont
 
 from can_support import (CAN_AVAILABLE, CAN_IMPORT_ERROR, CAN_BITRATES, DEFAULT_CAN_BITRATE,
                          CAN_DATA_BITRATES, DEFAULT_CAN_DATA_BITRATE,
@@ -28,11 +28,15 @@ from can_support import (CAN_AVAILABLE, CAN_IMPORT_ERROR, CAN_BITRATES, DEFAULT_
                          is_can_transport, list_candle_devices, OtAppMsgTlv,
                          CanFrameError, CanWorker, parse_can_frame, normalize_can_ack_pattern,
                          normalize_can_id_text, extract_can_id_from_line, can_id_sort_key,
-                         format_bitrate_label, CAN_MODE_AUTO, CAN_MODE_CLASSIC, CAN_MODE_FD_BRS, CAN_MODE_FD_NO_BRS, CAN_MODE_TLV, CAN_FRAME_MODES, convert_can_frame_text, TLV_HEADER_SIZE)
+                         format_bitrate_label, CAN_MODE_AUTO, CAN_MODE_CLASSIC, CAN_MODE_FD_BRS, CAN_MODE_FD_NO_BRS, CAN_MODE_TLV, CAN_FRAME_MODES, convert_can_frame_text, TLV_HEADER_SIZE,
+                         PAYLOAD_UART_CAN, UART_CAN_PAYLOAD_LABEL, UART_CAN_BUSES, UART_CAN_CFG_MODES,
+                         UART_CAN_NOMINAL_RATES, UART_CAN_DATA_RATES, UART_CAN_FRAME_MODE_SHORT,
+                         default_uart_can_settings, normalize_uart_can_settings, uart_can_settings_label,
+                         is_uart_can_control_command, build_uart_can_cfg_line, build_uart_can_line, compose_uart_can_text)
 
 CFG_DIR = "cfg"
 APP_SETTINGS_FILE = os.path.join(CFG_DIR, "app_settings.json")
-APP_VERSION = "1.9.0"
+APP_VERSION = "1.10.0"
 
 # ==========================================
 # GLOBALNY MOTYW CIEMNY (QSS)
@@ -205,6 +209,7 @@ def get_default_config():
         "parsers": [],
         "watch_patterns": [],
         "watch_print_in_console": True,
+        "uart_can_bridge": default_uart_can_settings(),   # Most UART -> CAN (Nucleo can_uart_bridge)
         "buttons": [get_default_button(i + 1) for i in range(10)]
     }
     return config
@@ -228,6 +233,7 @@ def load_config(filepath):
                     config["eol"] = "CRLF"
                 if config.get("transport") not in TRANSPORTS:
                     config["transport"] = TRANSPORT_SERIAL
+                config["uart_can_bridge"] = normalize_uart_can_settings(config.get("uart_can_bridge"))
                 try:
                     if int(config.get("can_bitrate", DEFAULT_CAN_BITRATE)) not in CAN_BITRATES:
                         config["can_bitrate"] = DEFAULT_CAN_BITRATE
@@ -472,9 +478,9 @@ class LiveWatchRowWidget(QFrame):
             if exp > now and not tok.isspace():
                 has_active_flash = True
                 # Błysk zmienionej wartości: złoto-pomarańczowe tło i jasny tekst
-                parts.append(f'<span style="background-color: #5c3c00; color: #ffd43b; font-weight: bold;">{esc}</span>')
+                parts.append(f'<span style="white-space: pre-wrap; background-color: #5c3c00; color: #ffd43b; font-weight: bold;">{esc}</span>')
             else:
-                parts.append(f'<span style="color: #e4e4e7;">{esc}</span>')
+                parts.append(f'<span style="white-space: pre-wrap; color: #e4e4e7;">{esc}</span>')
         self.lbl_content.setText("".join(parts))
         return has_active_flash
 
@@ -569,6 +575,21 @@ CAN_BUTTON_PLACEHOLDERS = {
     "query_rx": "np. 581#* lub 581#01*",
 }
 
+# Most UART->CAN: potwierdzenia to linie tekstu z Nucleo, np.
+#   '[CAN_UART] Ramka: 187 [1] 01'  oraz  '[CAN_UART] Rozmiar: 1B (FD: False, BRS: False) -> CAN1 OK'
+# ACK przycisku toggle jest dopasowywany dosłownie (bez wildcardów), odpowiedź Query przez fnmatch.
+UART_CAN_BUTTON_EXAMPLES = {
+    "tog_ack_on": "187 [1] 01",
+    "tog_ack_off": "187 [1] 00",
+    "query_rx": "*CAN1 OK*",
+}
+
+UART_CAN_BUTTON_PLACEHOLDERS = {
+    "tog_ack_on": "np. 187 [1] 01 (fragment linii 'Ramka:' z Nucleo)",
+    "tog_ack_off": "np. 187 [1] 00 (fragment linii 'Ramka:' z Nucleo)",
+    "query_rx": "np. *CAN1 OK* lub *ERR*",
+}
+
 
 class ClickToClearLineEdit(QLineEdit):
     """Pole tekstowe z obsługą przykładowego tekstu znikającego natychmiast po kliknięciu myszą."""
@@ -655,9 +676,10 @@ class ClickToClearPlainTextEdit(QPlainTextEdit):
 
 class ButtonEditDialog(QDialog):
     def __init__(self, btn_data, parent=None, is_can_mode: bool = False,
-                 transport: str = TRANSPORT_SERIAL, can_fd_enabled: bool = True):
+                 transport: str = TRANSPORT_SERIAL, can_fd_enabled: bool = True, uart_can_bus: int = 1):
         super().__init__(parent)
         self.setWindowTitle(f"Edytuj {btn_data.get('name', 'Przycisk')}")
+        self.uart_can_bus = uart_can_bus if uart_can_bus in UART_CAN_BUSES else 1
         self.btn_data = btn_data
         
         # Ustalenie transportu i flag trybu CAN / CAN FD
@@ -665,8 +687,9 @@ class ButtonEditDialog(QDialog):
             transport = TRANSPORT_SLCAN
         self.transport = str(transport)
         self.is_can_mode = is_can_transport(self.transport) or bool(is_can_mode)
-        # Tryb CAN FD jest dostępny WYŁĄCZNIE dla adaptera candleLight z włączoną obsługą FD:
-        self.can_fd_capable = (self.transport == TRANSPORT_CANDLE) and bool(can_fd_enabled)
+        # Tryb CAN FD jest dostępny dla adaptera candleLight z włączoną obsługą FD oraz dla mostu
+        # UART->CAN (Nucleo) w profilu Serial (format TX "UART→CAN"):
+        self.can_fd_capable = ((self.transport == TRANSPORT_CANDLE) and bool(can_fd_enabled)) or self.transport == TRANSPORT_SERIAL
         
         self.delete_requested = False
         self.autofix_target = None
@@ -708,10 +731,13 @@ class ButtonEditDialog(QDialog):
             else:
                 self.combo_payload_type.setToolTip("W profilu CANable (slcan) format przycisków jest zablokowany na CAN (wyłącznie klasyczny CAN 2.0).")
         else:
-            self.combo_payload_type.addItems(["ASCII", "HEX"])
+            self.combo_payload_type.addItems(["ASCII", "HEX", UART_CAN_PAYLOAD_LABEL])
             cur_p = btn_data.get("payload_type", "ASCII")
-            self.combo_payload_type.setCurrentText(cur_p if cur_p in ("ASCII", "HEX") else "ASCII")
-            self.combo_payload_type.setToolTip("Format transmisji portu szeregowego: ASCII (tekst) lub HEX (bajty binarne).")
+            if cur_p == PAYLOAD_UART_CAN:
+                cur_p = UART_CAN_PAYLOAD_LABEL
+            self.combo_payload_type.setCurrentText(cur_p if cur_p in ("ASCII", "HEX", UART_CAN_PAYLOAD_LABEL) else "ASCII")
+            self.combo_payload_type.setToolTip("Format transmisji portu szeregowego: ASCII (tekst), HEX (bajty binarne) lub UART→CAN "
+                                               "(ramka CAN wysyłana jako polecenie tekstowe do mostu Nucleo can_uart_bridge).")
             
         top_layout.addRow("Format TX:", self.combo_payload_type)
 
@@ -1119,10 +1145,20 @@ class ButtonEditDialog(QDialog):
         self.on_payload_type_changed(self.combo_payload_type.currentText())
         self.validate_and_preview()
 
+    def current_payload_type(self) -> str:
+        """Klucz formatu TX zapisywany w profilu ('ASCII', 'HEX', 'CAN' lub 'UART_CAN')."""
+        if self.is_can_mode:
+            return "CAN"
+        txt = self.combo_payload_type.currentText()
+        return PAYLOAD_UART_CAN if txt == UART_CAN_PAYLOAD_LABEL else txt
+
+    def is_can_payload(self) -> bool:
+        return self.current_payload_type() in ("CAN", PAYLOAD_UART_CAN)
+
     def on_add_step(self, label="", tx=""):
         r = self.table_steps.rowCount()
         self.table_steps.insertRow(r)
-        is_can = (self.combo_payload_type.currentText() == "CAN") or self.is_can_mode
+        is_can = self.is_can_payload()
         default_label = label if label else f"Krok {r+1}"
         default_tx = tx if tx else ("187#00" if is_can else "")
         self.table_steps.setItem(r, 0, QTableWidgetItem(default_label))
@@ -1161,7 +1197,8 @@ class ButtonEditDialog(QDialog):
             self.table_steps.selectRow(r + 1)
 
     def on_payload_type_changed(self, ptype):
-        is_can = (ptype == "CAN") or self.is_can_mode
+        is_uart_can = (ptype == UART_CAN_PAYLOAD_LABEL)
+        is_can = (ptype == "CAN") or is_uart_can or self.is_can_mode
         if hasattr(self, "lbl_can_mode") and hasattr(self, "combo_can_mode"):
             self.lbl_can_mode.setVisible(is_can)
             self.combo_can_mode.setVisible(is_can)
@@ -1171,7 +1208,7 @@ class ButtonEditDialog(QDialog):
             self.btn_can_fd.setVisible(is_can and self.can_fd_capable)
         if hasattr(self, "btn_can_tlv"):
             self.btn_can_tlv.setVisible(is_can and self.can_fd_capable)
-        if ptype == "CAN":
+        if ptype == "CAN" or is_uart_can:
             self.le_push_tx.setPlaceholderText(CAN_BUTTON_PLACEHOLDERS["push_tx"])
             self.le_tog_tx_on.setPlaceholderText(CAN_BUTTON_PLACEHOLDERS["tog_tx_on"])
             self.le_tog_tx_off.setPlaceholderText(CAN_BUTTON_PLACEHOLDERS["tog_tx_off"])
@@ -1202,6 +1239,14 @@ class ButtonEditDialog(QDialog):
                     f.set_example(ex)
             if not self.le_mac_tx.toPlainText().strip() or self.le_mac_tx.is_example:
                 self.le_mac_tx.set_example(CAN_BUTTON_EXAMPLES["mac_tx"])
+            if is_uart_can:
+                # Most UART->CAN nie przekazuje ramek z magistrali – ACK / odpowiedź to linie tekstu z Nucleo
+                self.le_tog_ack_on.setPlaceholderText(UART_CAN_BUTTON_PLACEHOLDERS["tog_ack_on"])
+                self.le_tog_ack_off.setPlaceholderText(UART_CAN_BUTTON_PLACEHOLDERS["tog_ack_off"])
+                self.le_query_rx.setPlaceholderText(UART_CAN_BUTTON_PLACEHOLDERS["query_rx"])
+                for f, key in ((self.le_tog_ack_on, "tog_ack_on"), (self.le_tog_ack_off, "tog_ack_off"), (self.le_query_rx, "query_rx")):
+                    if not f.text().strip() or f.is_example:
+                        f.set_example(UART_CAN_BUTTON_EXAMPLES[key])
         elif ptype == "HEX":
             self.le_push_tx.setPlaceholderText("np. AA 01 02")
             self.le_tog_tx_on.setPlaceholderText("np. AA 01")
@@ -1295,7 +1340,7 @@ class ButtonEditDialog(QDialog):
         mapping = {"push": 0, "toggle": 1, "hold": 2, "trigger": 3, "macro": 4, "query": 5, "step": 6}
         self.stack.setCurrentIndex(mapping.get(text, 0))
         
-        is_can = (self.combo_payload_type.currentText() == "CAN") or self.is_can_mode
+        is_can = self.is_can_payload()
         
         if is_can:
             can_syntax_map = {
@@ -1329,6 +1374,10 @@ class ButtonEditDialog(QDialog):
                 )
             }
             syntax, desc = can_syntax_map.get(text, ("", ""))
+            if self.current_payload_type() == PAYLOAD_UART_CAN:
+                desc = (f"{desc} Most UART→CAN: ramka trafia przez COM do Nucleo jako linia tekstu z prefiksem "
+                        f"CAN{self.uart_can_bus}: (CRLF). Polecenia CFG#.., CFG?, BUS#n, MODE#.., HELP są wysyłane bez zmian. "
+                        f"ACK (toggle) to dosłowny fragment odpowiedzi Nucleo, np. '187 [1] 01'; odpowiedź Query to wzorzec, np. *CAN1 OK*.")
         else:
             uart_syntax_map = {
                 "push": (
@@ -1450,8 +1499,14 @@ class ButtonEditDialog(QDialog):
         else:
             self.lbl_preview_val.setText(s0)
 
-        is_can = (self.combo_payload_type.currentText() == "CAN") or self.is_can_mode
+        is_can = self.is_can_payload()
         ptype = self.combo_payload_type.currentText()
+        is_uart_can = self.current_payload_type() == PAYLOAD_UART_CAN
+
+        if is_uart_can and is_uart_can_control_command(s0):
+            self.lbl_preview_status.setText(f"✅ Polecenie sterujące mostem UART→CAN (wysyłane bez zmian): {s0}")
+            self.lbl_preview_status.setStyleSheet("color: #69db7c; font-size: 11px; font-weight: bold;")
+            return
 
         if is_can or ptype == "CAN":
             can_mode = self.combo_can_mode.currentData() if hasattr(self, 'combo_can_mode') else CAN_MODE_AUTO
@@ -1483,6 +1538,9 @@ class ButtonEditDialog(QDialog):
                             self.lbl_preview_status.setText(f"✅ Poprawna ramka CAN FD: ID {id_fmt} ({ext_lbl}), DLC: {frame0.dlc} B{brs_str}  |  Dane: [{data_hex}]")
                     else:
                         self.lbl_preview_status.setText(f"✅ Poprawna ramka Klasyczny CAN 2.0: ID {id_fmt} ({ext_lbl}), DLC: {frame0.dlc} B  |  Dane: [{data_hex}]")
+                if is_uart_can:
+                    bridge_line, _ = build_uart_can_line(s0, self.uart_can_bus, can_mode)
+                    self.lbl_preview_status.setText(f"{self.lbl_preview_status.text()}\n➜ Linia UART do Nucleo: {bridge_line}")
                 self.lbl_preview_status.setStyleSheet("color: #69db7c; font-size: 11px; font-weight: bold;")
             except (CanFrameError, Exception) as e:
                 err_msg = str(e)
@@ -1583,13 +1641,16 @@ class ButtonEditDialog(QDialog):
             super().accept()
             return
         raw_text = self.get_current_tx_text()
-        is_can = (self.combo_payload_type.currentText() == "CAN") or self.is_can_mode
+        is_can = self.is_can_payload()
         if raw_text and is_can:
             dummy = {}
             s0 = evaluate_dynamic_tokens(raw_text, dummy, "check")
             can_mode = self.combo_can_mode.currentData() if hasattr(self, 'combo_can_mode') else CAN_MODE_AUTO
             try:
-                parse_can_frame(s0, can_mode=can_mode)
+                if self.current_payload_type() == PAYLOAD_UART_CAN:
+                    build_uart_can_line(s0, self.uart_can_bus, can_mode)
+                else:
+                    parse_can_frame(s0, can_mode=can_mode)
             except (CanFrameError, Exception) as e:
                 ret = QMessageBox.warning(
                     self, 
@@ -1618,7 +1679,7 @@ class ButtonEditDialog(QDialog):
             "type": t,
             "name": self.le_name.text(),
             "show_marker": self.cb_show_marker.isChecked(),
-            "payload_type": "CAN" if self.is_can_mode else self.combo_payload_type.currentText(),
+            "payload_type": self.current_payload_type(),
             "can_mode": self.combo_can_mode.currentData() if hasattr(self, 'combo_can_mode') else CAN_MODE_AUTO
         }
         if t == "push":
@@ -2143,7 +2204,9 @@ class ConfigEditDialog(QDialog):
         trans = self.combo_transport.currentData()
         is_can = is_can_transport(trans)
         can_fd_on = bool(self.cb_can_fd.isChecked()) if trans == TRANSPORT_CANDLE else False
-        dlg = ButtonEditDialog(self.data["buttons"][idx], self, is_can_mode=is_can, transport=trans, can_fd_enabled=can_fd_on)
+        uart_can_bus = normalize_uart_can_settings(self.data.get("uart_can_bridge"))["bus"]
+        dlg = ButtonEditDialog(self.data["buttons"][idx], self, is_can_mode=is_can, transport=trans, can_fd_enabled=can_fd_on,
+                               uart_can_bus=uart_can_bus)
         if dlg.exec():
             self.data["buttons"][idx] = dlg.get_data()
             b = self.data["buttons"][idx]
@@ -2528,11 +2591,16 @@ class ParserManagerDialog(QDialog):
 # DIALOG KREATORA / NADAJNIKA CAN FD & TLV
 # ==========================================
 class CanFdTxDialog(QDialog):
-    """Kreator i nadajnik ramek CAN / CAN FD oraz binarnej struktury ot_app_msg_tlv (<BH)."""
-    def __init__(self, parent_tab, parent=None):
+    """Kreator i nadajnik ramek CAN / CAN FD oraz binarnej struktury ot_app_msg_tlv (<BH).
+
+    bridge=True: ramki nie idą przez adapter CAN, tylko jako linia tekstu przez COM do mostu
+    UART->CAN (Nucleo, firmware can_uart_bridge) na magistralę wybraną na pasku karty.
+    """
+    def __init__(self, parent_tab, parent=None, bridge: bool = False):
         super().__init__(parent)
         self.tab = parent_tab
-        self.setWindowTitle("📦 Kreator i Nadajnik Ramek CAN FD / TLV")
+        self.bridge = bridge
+        self.setWindowTitle("🚌 Kreator ramek UART→CAN (most Nucleo)" if bridge else "📦 Kreator i Nadajnik Ramek CAN FD / TLV")
         self.resize(540, 480)
         
         self.timer_cyclic = QTimer(self)
@@ -2626,8 +2694,9 @@ class CanFdTxDialog(QDialog):
         self.btn_send_once.clicked.connect(self.send_once)
 
         self.spin_interval = QSpinBox()
-        self.spin_interval.setRange(10, 10000)
-        self.spin_interval.setValue(100)
+        # Most UART->CAN odpowiada 3 liniami na każdą ramkę – zbyt szybki strumień przepełni bufor RX Nucleo (512 B)
+        self.spin_interval.setRange(50 if bridge else 10, 10000)
+        self.spin_interval.setValue(200 if bridge else 100)
         self.spin_interval.setSuffix(" ms")
 
         self.btn_send_cyclic = QPushButton("🔁 Nadawaj cyklicznie")
@@ -2675,14 +2744,25 @@ class CanFdTxDialog(QDialog):
             cmd = self.build_frame_command()
             frame = parse_can_frame(cmd)
             display_text = frame.to_display()
-            self.lbl_preview.setText(f"Polecenie: {cmd}\nRamka:     {display_text}\nRozmiar:   {frame.dlc}B (FD: {frame.is_fd}, BRS: {frame.bitrate_switch})")
+            preview = f"Polecenie: {cmd}\nRamka:     {display_text}\nRozmiar:   {frame.dlc}B (FD: {frame.is_fd}, BRS: {frame.bitrate_switch})"
+            if self.bridge:
+                line, _ = build_uart_can_line(cmd, self._bridge_bus(), CAN_MODE_AUTO)
+                preview += f"\nUART:      {line}"
+            self.lbl_preview.setText(preview)
         except Exception as e:
             self.lbl_preview.setText(f"[Błąd składni]: {e}")
+
+    def _bridge_bus(self) -> int:
+        return self.tab.get_uart_can_settings()["bus"] if self.tab else 1
 
     def send_once(self):
         cmd = self.build_frame_command()
         if self.tab:
-            self.tab.send_payload(cmd, source_name="CAN FD TX", payload_type="CAN")
+            if self.bridge:
+                # Flagi FD / BRS wynikają z pól kreatora, dlatego standard ramki z paska jest pomijany (auto)
+                self.tab.send_payload(cmd, source_name="UART→CAN TX", payload_type=PAYLOAD_UART_CAN, can_mode=CAN_MODE_AUTO)
+            else:
+                self.tab.send_payload(cmd, source_name="CAN FD TX", payload_type="CAN")
 
     def _send_cyclic_tick(self):
         self.send_once()
@@ -2701,6 +2781,13 @@ class CanFdTxDialog(QDialog):
     def copy_command(self):
         from PyQt6.QtWidgets import QApplication
         cmd = self.build_frame_command()
+        if self.bridge:
+            try:
+                cmd, _ = build_uart_can_line(cmd, self._bridge_bus(), CAN_MODE_AUTO)
+            except CanFrameError as e:
+                if self.tab:
+                    self.tab.log_info(f"Błąd składni ramki UART→CAN: {e}")
+                return
         QApplication.clipboard().setText(cmd)
         if self.tab:
             self.tab.log_info(f"Skopiowano polecenie CAN FD do schowka: {cmd}")
@@ -2708,6 +2795,79 @@ class CanFdTxDialog(QDialog):
     def closeEvent(self, event):
         self.timer_cyclic.stop()
         super().closeEvent(event)
+
+class UartCanCfgDialog(QDialog):
+    """Konfiguracja magistrali mostu UART->CAN (Nucleo): składa i wysyła polecenie CFG#<bus>#<tryb>#<nominal>[#<data>]."""
+    def __init__(self, settings: dict, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("🚌 Konfiguracja magistrali mostu UART→CAN")
+        self.settings = normalize_uart_can_settings(settings)
+
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+
+        self.combo_bus = QComboBox()
+        for bus in UART_CAN_BUSES:
+            self.combo_bus.addItem(f"CAN{bus}", bus)
+        self.combo_bus.setCurrentIndex(max(0, self.combo_bus.findData(self.settings["bus"])))
+        form.addRow("Magistrala:", self.combo_bus)
+
+        self.combo_mode = QComboBox()
+        for key, title in UART_CAN_CFG_MODES:
+            self.combo_mode.addItem(title, key)
+        self.combo_mode.setCurrentIndex(max(0, self.combo_mode.findData(self.settings["cfg_mode"])))
+        form.addRow("Tryb magistrali:", self.combo_mode)
+
+        self.combo_nominal = QComboBox()
+        self.combo_nominal.addItems(UART_CAN_NOMINAL_RATES)
+        self.combo_nominal.setCurrentText(self.settings["nominal"])
+        form.addRow("Nominal (arbitraż):", self.combo_nominal)
+
+        self.lbl_data = QLabel("Data (BRS):")
+        self.combo_data = QComboBox()
+        self.combo_data.addItems(UART_CAN_DATA_RATES)
+        self.combo_data.setCurrentText(self.settings["data"])
+        form.addRow(self.lbl_data, self.combo_data)
+        layout.addLayout(form)
+
+        self.lbl_preview = QLabel()
+        self.lbl_preview.setStyleSheet("font-family: monospace; color: #ffd43b; font-size: 12px; padding: 4px;")
+        layout.addWidget(self.lbl_preview)
+
+        hint = QLabel("Polecenie trafia przez COM do Nucleo. Ustaw tę samą konfigurację w adapterze CAN po stronie PC.\n"
+                      "Ustawienie obowiązuje do resetu Nucleo lub wyboru profilu parsera w firmware.")
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: #a1a1aa; font-size: 11px;")
+        layout.addWidget(hint)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Wyślij CFG ➤")
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("Anuluj")
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        for combo in (self.combo_bus, self.combo_mode, self.combo_nominal, self.combo_data):
+            combo.currentIndexChanged.connect(self.update_preview)
+        self.update_preview()
+
+    def update_preview(self):
+        is_brs = self.combo_mode.currentData() == "FD_BRS"
+        self.lbl_data.setEnabled(is_brs)
+        self.combo_data.setEnabled(is_brs)
+        self.lbl_preview.setText(f"Polecenie: {self.build_line()}")
+
+    def build_line(self) -> str:
+        return build_uart_can_cfg_line(self.combo_bus.currentData(), self.combo_mode.currentData(),
+                                       self.combo_nominal.currentText(), self.combo_data.currentText())
+
+    def get_settings(self) -> dict:
+        return {
+            "cfg_mode": self.combo_mode.currentData(),
+            "nominal": self.combo_nominal.currentText(),
+            "data": self.combo_data.currentText(),
+        }
+
 
 # ==========================================
 # 5. GŁÓWNY INTERFEJS KARTY (SerialTab)
@@ -3244,9 +3404,68 @@ class SerialTab(QWidget):
         self.btn_can_fd_builder.setToolTip("Otwórz kreator i nadajnik ramek CAN FD oraz struktur binarnych TLV")
         self.btn_can_fd_builder.clicked.connect(self.open_can_fd_builder)
         self.btn_can_fd_builder.hide()
-        
+
+        # Most UART -> CAN (Nucleo can_uart_bridge): pole ID + menu konfiguracji obok "Wyślij"
+        self.uart_can_id_input = QLineEdit()
+        self.uart_can_id_input.setFixedWidth(84)
+        self.uart_can_id_input.setPlaceholderText("ID hex")
+        self.uart_can_id_input.setToolTip("CAN ID (hex): 3 cyfry = 11-bit (np. 321), 8 cyfr = 29-bit (np. 18DAF110).\n"
+                                          "Puste ID: pole danych traktowane jest jako pełne polecenie (np. CFG?, 321##1#01 02).")
+        self.uart_can_id_input.returnPressed.connect(self.send_manual_command)
+        self.uart_can_id_input.textChanged.connect(self.update_uart_can_input_state)
+        self.uart_can_id_input.hide()
+        self.cmd_input.textChanged.connect(self.update_uart_can_input_state)
+
+        self.btn_uart_can = QPushButton("🚌 CAN")
+        self.btn_uart_can.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_uart_can.setToolTip("Most UART→CAN (Nucleo): wysyłanie ramek CAN przez port COM bez znajomości składni poleceń")
+        self.uart_can_menu = QMenu(self)
+
+        self.action_uart_can_enable = QAction("Tryb UART→CAN (pola ID + dane jako ramka CAN)", self, checkable=True)
+        self.action_uart_can_enable.triggered.connect(self.toggle_uart_can_mode)
+        self.uart_can_menu.addAction(self.action_uart_can_enable)
+        self.uart_can_menu.addSeparator()
+
+        bus_menu = self.uart_can_menu.addMenu("Magistrala")
+        self.uart_can_bus_group = QActionGroup(self)
+        self.uart_can_bus_actions = {}
+        for bus in UART_CAN_BUSES:
+            act = QAction(f"CAN{bus}", self, checkable=True)
+            act.triggered.connect(lambda checked=False, b=bus: self.set_uart_can_option("bus", b))
+            self.uart_can_bus_group.addAction(act)
+            bus_menu.addAction(act)
+            self.uart_can_bus_actions[bus] = act
+
+        mode_menu = self.uart_can_menu.addMenu("Standard ramki")
+        self.uart_can_mode_group = QActionGroup(self)
+        self.uart_can_mode_actions = {}
+        for mode_key, mode_title in CAN_FRAME_MODES:
+            act = QAction(mode_title, self, checkable=True)
+            act.triggered.connect(lambda checked=False, m=mode_key: self.set_uart_can_option("frame_mode", m))
+            self.uart_can_mode_group.addAction(act)
+            mode_menu.addAction(act)
+            self.uart_can_mode_actions[mode_key] = act
+
+        self.uart_can_menu.addSeparator()
+        act_cfg = QAction("⚙ Konfiguracja magistrali (CFG#)...", self)
+        act_cfg.triggered.connect(self.open_uart_can_cfg_dialog)
+        self.uart_can_menu.addAction(act_cfg)
+        act_builder = QAction("📦 Kreator ramki CAN FD / TLV...", self)
+        act_builder.triggered.connect(self.open_uart_can_builder)
+        self.uart_can_menu.addAction(act_builder)
+        self.uart_can_menu.addSeparator()
+        act_cfg_q = QAction("❓ Odczytaj konfigurację (CFG?)", self)
+        act_cfg_q.triggered.connect(lambda: self.send_uart_can_command("CFG?"))
+        self.uart_can_menu.addAction(act_cfg_q)
+        act_help = QAction("📖 Pomoc mostu (HELP)", self)
+        act_help.triggered.connect(lambda: self.send_uart_can_command("HELP"))
+        self.uart_can_menu.addAction(act_help)
+        self.btn_uart_can.setMenu(self.uart_can_menu)
+
+        cmd_layout.addWidget(self.uart_can_id_input)
         cmd_layout.addWidget(self.cmd_input, stretch=1)
         cmd_layout.addWidget(self.btn_can_fd_builder)
+        cmd_layout.addWidget(self.btn_uart_can)
         cmd_layout.addWidget(self.combo_cmd_format)
         cmd_layout.addWidget(self.combo_eol)
         cmd_layout.addWidget(self.btn_send_cmd)
@@ -3571,6 +3790,111 @@ class SerialTab(QWidget):
         dlg = CanFdTxDialog(self, self)
         dlg.exec()
 
+    # ==========================================
+    # MOST UART -> CAN (Nucleo can_uart_bridge)
+    # ==========================================
+    def get_uart_can_settings(self) -> dict:
+        """Ustawienia mostu z profilu; normalizowane w miejscu, aby zmiany od razu trafiały do app_config."""
+        raw = self.app_config.get("uart_can_bridge")
+        settings = normalize_uart_can_settings(raw)
+        if isinstance(raw, dict):
+            raw.update(settings)
+            return raw
+        self.app_config["uart_can_bridge"] = settings
+        return settings
+
+    def is_uart_can_active(self) -> bool:
+        return (self.app_config.get("transport", TRANSPORT_SERIAL) == TRANSPORT_SERIAL
+                and self.get_uart_can_settings()["enabled"])
+
+    def set_uart_can_option(self, key: str, value):
+        settings = self.get_uart_can_settings()
+        if settings.get(key) != value:
+            settings[key] = value
+            self.save_current_settings_to_config(force=True)
+        self.refresh_uart_can_ui()
+
+    def toggle_uart_can_mode(self, checked: bool):
+        self.set_uart_can_option("enabled", bool(checked))
+        if checked:
+            settings = self.get_uart_can_settings()
+            self.log_info(f"Tryb UART→CAN włączony: {uart_can_settings_label(settings)}. Wpisz ID i dane, Enter = wyślij.")
+            self.uart_can_id_input.setFocus()
+
+    def refresh_uart_can_ui(self):
+        """Synchronizuje pasek TX (pole ID, etykieta 🚌, format/EOL) z ustawieniami mostu w profilu."""
+        if not hasattr(self, "btn_uart_can"):
+            return
+        settings = self.get_uart_can_settings()
+        is_serial = self.app_config.get("transport", TRANSPORT_SERIAL) == TRANSPORT_SERIAL
+        active = is_serial and settings["enabled"]
+
+        self.action_uart_can_enable.setChecked(settings["enabled"])
+        if settings["bus"] in self.uart_can_bus_actions:
+            self.uart_can_bus_actions[settings["bus"]].setChecked(True)
+        if settings["frame_mode"] in self.uart_can_mode_actions:
+            self.uart_can_mode_actions[settings["frame_mode"]].setChecked(True)
+
+        if active:
+            self.btn_uart_can.setText(f"🚌 {uart_can_settings_label(settings)}")
+            self.btn_uart_can.setStyleSheet("background-color: #2b8a3e; color: white; font-weight: bold; border: none; padding: 4px 8px;")
+            if not self.uart_can_id_input.text() and settings.get("last_id"):
+                self.uart_can_id_input.setText(settings["last_id"])
+            self.cmd_input.setPlaceholderText("Dane hex, np. 01 02 03 (puste ID = pełne polecenie: CFG?, 321##1#01 02)...")
+        else:
+            self.btn_uart_can.setText("🚌 CAN")
+            self.btn_uart_can.setStyleSheet("")
+            self.cmd_input.setPlaceholderText("Wpisz komendę (Enter = wyślij, ↑/↓ = historia)...")
+        self.uart_can_id_input.setVisible(active)
+        # W trybie mostu linia zawsze idzie jako ASCII + CRLF – wybór formatu i EOL jest ukryty
+        self.combo_cmd_format.setVisible(is_serial and not active)
+        self.combo_eol.setVisible(is_serial and not active)
+        self.update_uart_can_input_state()
+
+    def update_uart_can_input_state(self):
+        """Podgląd na żywo: dymek z linią wysyłaną do Nucleo, czerwona ramka przy błędzie składni."""
+        if not hasattr(self, "uart_can_id_input"):
+            return
+        if not self.is_uart_can_active():
+            self.cmd_input.setStyleSheet("")
+            self.uart_can_id_input.setStyleSheet("")
+            self.cmd_input.setToolTip("")
+            return
+        id_text = self.uart_can_id_input.text().strip()
+        payload = self.cmd_input.text().strip()
+        id_bad = bool(id_text) and not normalize_can_id_text(id_text)
+        self.uart_can_id_input.setStyleSheet("border: 1px solid #f03e3e;" if id_bad else "")
+        if not id_text and not payload:
+            self.cmd_input.setStyleSheet("")
+            self.cmd_input.setToolTip("")
+            return
+        settings = self.get_uart_can_settings()
+        try:
+            line, _ = build_uart_can_line(compose_uart_can_text(id_text, payload, settings["frame_mode"]),
+                                          settings["bus"], settings["frame_mode"])
+            self.cmd_input.setStyleSheet("")
+            self.cmd_input.setToolTip(f"➜ Nucleo: {line}")
+        except CanFrameError as e:
+            self.cmd_input.setStyleSheet("border: 1px solid #f03e3e;")
+            self.cmd_input.setToolTip(f"⚠ {e}")
+
+    def send_uart_can_command(self, command: str):
+        self.send_payload(command, source_name="UART→CAN", payload_type=PAYLOAD_UART_CAN)
+
+    def open_uart_can_cfg_dialog(self):
+        settings = self.get_uart_can_settings()
+        dlg = UartCanCfgDialog(settings, self)
+        if dlg.exec():
+            line = dlg.build_line()
+            settings.update(dlg.get_settings())
+            self.save_current_settings_to_config(force=True)
+            self.send_uart_can_command(line)
+            self.log_info("Pamiętaj: ustaw tę samą konfigurację (nominal / data) w adapterze CAN po stronie PC.")
+
+    def open_uart_can_builder(self):
+        dlg = CanFdTxDialog(self, self, bridge=True)
+        dlg.exec()
+
     def apply_transport_ui(self):
         trans = self.app_config.get("transport", TRANSPORT_SERIAL)
         is_can = is_can_transport(trans)
@@ -3594,6 +3918,8 @@ class SerialTab(QWidget):
             self.radio_binary.hide()
             self.combo_cmd_format.hide()
             self.combo_eol.hide()
+            self.btn_uart_can.hide()
+            self.uart_can_id_input.hide()
             # Przycisk TLV / CAN FD dostępny WYŁĄCZNIE dla candleLight w trybie CAN FD:
             is_candle_fd = is_candle and bool(self.app_config.get("can_fd_enabled", True))
             if hasattr(self, "btn_can_fd_builder"):
@@ -3623,8 +3949,9 @@ class SerialTab(QWidget):
             self.combo_eol.show()
             if hasattr(self, "btn_can_fd_builder"):
                 self.btn_can_fd_builder.hide()
-            self.cmd_input.setPlaceholderText("Wpisz komendę (Enter = wyślij, ↑/↓ = historia)...")
-            
+            self.btn_uart_can.show()
+            self.refresh_uart_can_ui()
+
             self.action_dtr.setVisible(True)
             self.action_rts.setVisible(True)
             self.action_reset_mcu.setVisible(True)
@@ -4084,7 +4411,8 @@ class SerialTab(QWidget):
         trans = self.app_config.get("transport", TRANSPORT_SERIAL)
         is_can = is_can_transport(trans)
         can_fd_on = bool(self.app_config.get("can_fd_enabled", True))
-        dialog = ButtonEditDialog(btn_data, self, is_can_mode=is_can, transport=trans, can_fd_enabled=can_fd_on)
+        dialog = ButtonEditDialog(btn_data, self, is_can_mode=is_can, transport=trans, can_fd_enabled=can_fd_on,
+                                  uart_can_bus=self.get_uart_can_settings()["bus"])
         
         if dialog.exec(): 
             new_data = dialog.get_data()
@@ -4139,6 +4467,9 @@ class SerialTab(QWidget):
                         CAN_MODE_AUTO: "CAN Auto",
                     }.get(c_mode, "CAN")
                     p_type = mode_str
+            elif p_type == PAYLOAD_UART_CAN:
+                c_mode = btn_cfg.get("can_mode", CAN_MODE_AUTO)
+                p_type = f"{UART_CAN_PAYLOAD_LABEL} {UART_CAN_FRAME_MODE_SHORT.get(c_mode, 'Auto')}"
 
             if b_type == "toggle":
                 state = self.button_states[idx]
@@ -4202,8 +4533,9 @@ class SerialTab(QWidget):
 
     def log_tx(self, msg, marker=""):
         self.has_real_logs = True
-        marker_html = f'<span style="color: #ffaa00; font-weight: bold;">[{marker}] </span>' if marker else ""
-        self.append_html_no_autoscroll(f'<span style="color: #4dabf7;">TX {self.get_timestamp()}: </span>{marker_html}<span style="color: #74c0fc;">{msg}</span>')
+        marker_html = f'<span style="color: #ffaa00; font-weight: bold;">[{html_lib.escape(marker)}] </span>' if marker else ""
+        # pre-wrap: zachowuje wielokrotne spacje (wyrównanie kolumn), długie linie nadal się zawijają
+        self.append_html_no_autoscroll(f'<span style="color: #4dabf7;">TX {self.get_timestamp()}: </span>{marker_html}<span style="white-space: pre-wrap; color: #74c0fc;">{html_lib.escape(msg)}</span>')
 
     def log_rx(self, msg):
         ts = self.get_timestamp()
@@ -4215,9 +4547,22 @@ class SerialTab(QWidget):
         should_hide, parsed_msg, text_color = self.process_message_filters(clean_msg)
         if should_hide:
             return
-            
+        if text_color == "#d4d4d8" and "[CAN_UART]" in parsed_msg:
+            text_color = self.get_uart_can_response_color(parsed_msg)
+
         self.has_real_logs = True
-        self.append_html_no_autoscroll(f'<span style="color: #69db7c;">RX {ts}: </span><span style="color: {text_color};">{html_lib.escape(parsed_msg)}</span>')
+        self.append_html_no_autoscroll(f'<span style="color: #69db7c;">RX {ts}: </span><span style="white-space: pre-wrap; color: {text_color};">{html_lib.escape(parsed_msg)}</span>')
+
+    @staticmethod
+    def get_uart_can_response_color(msg: str) -> str:
+        """Kolor odpowiedzi mostu Nucleo: ERR = czerwony, WARN = pomarańczowy, '-> CANn OK' = zielony."""
+        if "ERR" in msg:
+            return "#ff6b6b"
+        if "WARN" in msg:
+            return "#ffa94d"
+        if msg.rstrip().endswith(" OK"):
+            return "#69db7c"
+        return "#d4d4d8"
 
     def log_info(self, msg):
         self.append_html_no_autoscroll(f'<span style="color: #71717a; font-style: italic;">ℹ {self.get_timestamp()} {msg}</span>')
@@ -4581,16 +4926,33 @@ class SerialTab(QWidget):
     def resolve_dynamic_tokens(self, text: str, btn_idx: int = -1) -> str:
         return evaluate_dynamic_tokens(text, self.button_counters, btn_idx)
 
-    def send_payload(self, payload_str, source_name="Manual", show_marker=False, payload_type="ASCII", btn_idx=-1):
+    def send_payload(self, payload_str, source_name="Manual", show_marker=False, payload_type="ASCII", btn_idx=-1, can_mode=None):
+        """Wysyła komendę / ramkę. Zwraca False, gdy nic nie zostało wysłane (brak połączenia lub błąd składni)."""
         if not self.worker or not self.worker.is_running:
             self.log_info(f"Brak aktywnego połączenia. Odrzucono: {source_name}")
-            return
+            return False
 
         scope_id = btn_idx if btn_idx >= 0 else source_name
         payload_str = evaluate_dynamic_tokens(payload_str, self.button_counters, scope_id)
 
         marker_text = source_name if show_marker else ""
         is_can = is_can_transport(self.app_config.get("transport"))
+
+        if not is_can and str(payload_type).upper() == PAYLOAD_UART_CAN:
+            # Most UART->CAN: ramka jako linia tekstu ASCII + CRLF do Nucleo (bez względu na wybrany EOL)
+            settings = self.get_uart_can_settings()
+            if can_mode is None:
+                can_mode = settings["frame_mode"]
+                if 0 <= btn_idx < len(self.app_config.get("buttons", [])):
+                    can_mode = self.app_config["buttons"][btn_idx].get("can_mode", CAN_MODE_AUTO)
+            try:
+                line, _ = build_uart_can_line(payload_str, settings["bus"], can_mode)
+            except CanFrameError as e:
+                self.log_info(f"Błąd składni ramki UART→CAN ({source_name}): {e}")
+                return False
+            self.worker.send_data((line + "\r\n").encode("ascii"))
+            self.log_tx(line, marker=marker_text)
+            return True
 
         if is_can or str(payload_type).upper() == "CAN":
             can_mode = CAN_MODE_AUTO
@@ -4600,7 +4962,7 @@ class SerialTab(QWidget):
                 frame = parse_can_frame(payload_str, can_mode=can_mode)
             except (CanFrameError, Exception) as e:
                 self.log_info(f"Błąd składni ramki CAN ({source_name}): {e}")
-                return
+                return False
             except Exception as e:
                 self.log_info(f"Błąd parsowania CAN ({source_name}): {e}")
                 return
@@ -4630,12 +4992,31 @@ class SerialTab(QWidget):
 
     def send_manual_command(self):
         text = self.cmd_input.text().strip()
+        if self.is_uart_can_active():
+            self.send_manual_uart_can(text)
+            return
         if text:
             self.cmd_input.add_to_history(text)
             is_can = is_can_transport(self.app_config.get("transport"))
             p_type = "CAN" if is_can else self.combo_cmd_format.currentText()
             self.send_payload(text, source_name="Terminal", payload_type=p_type, btn_idx=-1)
             self.cmd_input.clear()
+
+    def send_manual_uart_can(self, payload: str):
+        """Tryb UART->CAN: składa ramkę z pól ID + dane i wysyła ją do mostu Nucleo."""
+        id_text = self.uart_can_id_input.text().strip()
+        if not id_text and not payload:
+            return
+        settings = self.get_uart_can_settings()
+        command = compose_uart_can_text(id_text, payload, settings["frame_mode"])
+        if payload:
+            self.cmd_input.add_to_history(payload)
+        if self.send_payload(command, source_name="Terminal", payload_type=PAYLOAD_UART_CAN) is False:
+            return  # błąd składni lub brak połączenia – zostaw wpisany tekst do poprawy
+        self.cmd_input.clear()
+        if id_text and settings.get("last_id") != id_text:
+            settings["last_id"] = id_text
+            self.save_current_settings_to_config(force=True)
 
     def on_toggle_clicked(self, idx: int):
         btn_cfg = self.app_config["buttons"][idx]
@@ -4960,7 +5341,7 @@ class SerialTab(QWidget):
             if not btn_cfg.get("is_used", False) or btn_cfg.get("type") != "toggle":
                 continue
                 
-            if btn_cfg.get("payload_type", "ASCII") == "ASCII":
+            if btn_cfg.get("payload_type", "ASCII") in ("ASCII", PAYLOAD_UART_CAN):
                 ack_on_bytes = btn_cfg.get("ack_on", "").encode('utf-8')
                 ack_off_bytes = btn_cfg.get("ack_off", "").encode('utf-8')
             else:
@@ -5070,7 +5451,7 @@ class SerialTab(QWidget):
 
             self.has_real_logs = True
             html_entries.append(
-                f'<span style="color: #69db7c;">RX {ts_str}: </span><span style="color: {text_color};">{html_lib.escape(parsed_msg)}</span>'
+                f'<span style="color: #69db7c;">RX {ts_str}: </span><span style="white-space: pre-wrap; color: {text_color};">{html_lib.escape(parsed_msg)}</span>'
             )
 
         if any_watch_updated and not self.watch_decay_timer.isActive():
